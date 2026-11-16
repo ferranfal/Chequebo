@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chequebo"
+version = "0.1.0"
+description = "Monitor de procesos de escritorio para Linux con historial y máximos"
+requires-python = ">=3.10"
+dependencies = [
+  "PySide6-Essentials>=6.8,<7",
+  "pyqtgraph>=0.13.7,<0.15",
+  "psutil>=6,<8",
+]
+
+[project.optional-dependencies]
+nvidia = ["nvidia-ml-py>=12,<14"]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+chequebo = "chequebo.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["chequebo*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
