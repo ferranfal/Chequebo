@@ -60,8 +60,9 @@ def test_system_measurements_use_machine_capacity(monkeypatch, count):
     assert sample["cpu_percent"] == 50
     assert sample["cpu_equivalent"] == count / 2
     assert len(sample["cpu_system"]) == count
-    assert sample["read_mib_s"] == 2
-    assert sample["write_mib_s"] == 3
+    # Subtracting floating-point clock values can introduce tiny rounding errors.
+    assert sample["read_mib_s"] == pytest.approx(2, rel=1e-12)
+    assert sample["write_mib_s"] == pytest.approx(3, rel=1e-12)
 
 
 def test_monitor_records_only_on_request_and_keeps_running_after_stop(tmp_path, app, monkeypatch):
