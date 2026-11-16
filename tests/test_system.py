@@ -86,7 +86,9 @@ def test_monitor_records_only_on_request_and_keeps_running_after_stop(tmp_path, 
         assert metadata["scope"] == "system" and metadata["state"] == "stopped"
         assert metadata["ram_total_mib"] > 0
         assert metadata["swap_total_mib"] >= 0
-        assert samples[0]["elapsed"] < .1
+        # Verify the recording clock is rebased, without assuming a scheduler latency.
+        first_live = next(s for s in live if s["timestamp"] == samples[0]["timestamp"])
+        assert 0 <= samples[0]["elapsed"] < first_live["elapsed"]
         assert samples[0]["cpu_percent"] is None
         assert samples[-1]["cpu_percent"] == 50
         assert samples[0]["timestamp"] >= metadata["started_at"]
@@ -101,7 +103,8 @@ def test_monitor_records_only_on_request_and_keeps_running_after_stop(tmp_path, 
         assert monitor.wait(3000)
         metadata2, samples2 = load_session(second)
         assert metadata2["state"] == "stopped"
-        assert samples2[0]["elapsed"] < .1
+        second_live = next(s for s in live if s["timestamp"] == samples2[0]["timestamp"])
+        assert 0 <= samples2[0]["elapsed"] < second_live["elapsed"]
         assert samples2[0]["timestamp"] >= metadata2["started_at"]
     finally:
         monitor.stop()
