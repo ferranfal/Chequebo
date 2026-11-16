@@ -102,6 +102,7 @@ memory, so very large recordings may take time and substantial RAM to explore.
 | Each logical CPU | One bar per logical CPU (hardware thread), each from 0 to 100%, at the selected time. |
 | System RAM | Total RAM minus available RAM, including memory used by the OS and all programs. Reclaimable memory remains available. |
 | Swap | Used system swap. |
+| RAM + swap | RAM usage plus swap usage at the same instant, displayed in GiB. |
 | Disk I/O | System disk bytes read/written per second. Cached reads can produce zero physical reads. Layered storage can report activity at multiple device levels. |
 | GPU | Whole-device activity, averaged across detected supported cards. |
 | VRAM | Whole-device used GPU memory, summed across detected supported cards. |
@@ -110,6 +111,22 @@ On a machine with 8 logical CPUs, **50% system CPU = 4.0 CPU equivalents**. This
 could be eight CPUs partly busy, four fully busy, or another distribution. The
 individual bars show that distribution. Core and logical CPU counts are detected
 automatically, including when a recording was made on a different machine.
+
+The memory chart uses **GiB** and a fixed vertical range from zero to **physical
+RAM + configured swap**. A **red horizontal line** marks the physical RAM limit.
+For example, 64 GiB of RAM and 100 GiB of swap produce a 0–164 GiB axis with the
+line at 64 GiB. The blue curve shows combined usage; the caption separates RAM
+and swap usage, since Linux can use swap even while RAM remains available.
+Changing configured swap updates the live scale automatically on the next sample.
+Swap adds virtual memory capacity; it is not extra physical RAM.
+
+New recordings preserve memory capacities. When viewing a recording, the scale
+uses that computer's RAM and the largest swap capacity configured during the
+recording. Older recordings without capacity data still open, with the missing
+total identified instead of substituting the current computer's capacity.
+Memory peaks in the table and peak report use GiB; raw sample CSV columns ending
+in `_mib` keep their original MiB units. The combined peak is the largest
+simultaneous RAM + swap usage, not the sum of their separate peaks.
 
 Recordings made with older Chequebo versions still open and keep their original
 program-specific labels: RAM PSS and NVIDIA VRAM attributed to observed processes,
@@ -180,7 +197,8 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
 Tests cover peaks, missing values, persistence, real processes, orphan children,
 stopping recordings, VRAM deduplication, chart navigation, packaged launch behavior
 normalization with 1, 4, 8, 16, 64 and 128 logical CPUs, continuous system
-monitoring, repeated recording sessions and bounded live history. Linux CI runs on Python
+monitoring, repeated recording sessions, bounded live history, memory units,
+RAM/swap capacity changes and saved memory scales. Linux CI runs on Python
 3.10, 3.12 and 3.13. Individual GPU drivers need real-hardware validation.
 
 The Qt dependency currently uses the tested 6.11 series. A native reference-count

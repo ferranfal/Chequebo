@@ -47,7 +47,7 @@ def test_system_measurements_use_machine_capacity(monkeypatch, count):
     monkeypatch.setattr(metrics, "GPU", FakeGPU)
     monkeypatch.setattr(metrics.psutil, "cpu_percent", lambda **_: [50] * count)
     monkeypatch.setattr(metrics.psutil, "virtual_memory", lambda: NS(total=8192*metrics.MIB, available=3072*metrics.MIB))
-    monkeypatch.setattr(metrics.psutil, "swap_memory", lambda: NS(used=64*metrics.MIB))
+    monkeypatch.setattr(metrics.psutil, "swap_memory", lambda: NS(used=64*metrics.MIB, total=2048*metrics.MIB))
     io = NS(read_bytes=100*metrics.MIB, write_bytes=200*metrics.MIB)
     monkeypatch.setattr(metrics.psutil, "disk_io_counters", lambda: io)
     sampler = metrics.SystemSampler()
@@ -57,6 +57,8 @@ def test_system_measurements_use_machine_capacity(monkeypatch, count):
     sample = sampler.sample()
     assert sample["ram_mib"] == 5120
     assert sample["swap_mib"] == 64
+    assert sample["ram_total_mib"] == 8192
+    assert sample["swap_total_mib"] == 2048
     assert sample["cpu_percent"] == 50
     assert sample["cpu_equivalent"] == count / 2
     assert len(sample["cpu_system"]) == count
@@ -82,6 +84,8 @@ def test_monitor_records_only_on_request_and_keeps_running_after_stop(tmp_path, 
         until(lambda: len(changes) == 2, app)
         metadata, samples = load_session(first)
         assert metadata["scope"] == "system" and metadata["state"] == "stopped"
+        assert metadata["ram_total_mib"] > 0
+        assert metadata["swap_total_mib"] >= 0
         assert samples[0]["elapsed"] < .1
         assert samples[0]["cpu_percent"] is None
         assert samples[-1]["cpu_percent"] == 50
@@ -140,7 +144,7 @@ def test_gui_starts_live_and_separates_saved_view_from_bounded_history(tmp_path,
     try:
         until(lambda: len(window.samples) >= 2, app)
         assert not list(tmp_path.glob("*.chequebo"))
-        assert window.chart_groups["ram_mib"].title().startswith("System RAM")
+        assert window.chart_groups["memory_mib"].title() == "System memory · RAM + swap"
         window.start_recording()
         until(lambda: window.recording, app)
         until(lambda: len(window.samples) >= 4, app)
@@ -167,7 +171,7 @@ def test_gui_starts_live_and_separates_saved_view_from_bounded_history(tmp_path,
         writer.append(FakeSampler().sample())
         writer.close()
         window.load_recording(old)
-        assert "PSS" in window.chart_groups["ram_mib"].title()
+        assert "PSS" in window.chart_groups["memory_mib"].title()
         assert "Program VRAM" in window.table.item(6, 0).text()
     finally:
         window.close()

@@ -17,6 +17,7 @@ METRICS = (
     ("vram_mib", "Program VRAM · NVIDIA", "MiB"),
     ("processes", "Concurrent observed processes", ""),
     ("threads", "Program threads", ""),
+    ("memory_mib", "Program RAM + swap", "MiB"),
 )
 
 SYSTEM_METRICS = (
@@ -28,11 +29,28 @@ SYSTEM_METRICS = (
     ("gpu_percent", "GPU · whole system", "%"),
     ("vram_mib", "VRAM · whole system", "MiB"),
     ("processes", "System processes", ""),
+    ("memory_mib", "System RAM + swap", "MiB"),
 )
 
 
 def metrics_for(metadata):
     return SYSTEM_METRICS if metadata.get("scope") == "system" else METRICS
+
+
+def display_metric(key, value, unit):
+    """Keep recordings/raw CSV in their original units; present memory in GiB."""
+    if key in ("ram_mib", "swap_mib", "memory_mib"):
+        return (value / 1024 if value is not None else None), "GiB"
+    return value, unit
+
+
+def metric_value(sample, key):
+    if key == "memory_mib":
+        values = (sample.get("ram_mib"), sample.get("swap_mib"))
+        if all(isinstance(value, (int, float)) and math.isfinite(value) for value in values):
+            return sum(values)
+        return None
+    return sample.get(key)
 
 
 def clock(seconds):
@@ -45,13 +63,14 @@ def clock(seconds):
 def maximum(samples, key, start=None, end=None):
     """Maximum of aggregated samples; return the earliest sample on a tie."""
     candidates = (
-        s for s in samples
+        (s, metric_value(s, key)) for s in samples
         if (start is None or s["elapsed"] >= start)
         and (end is None or s["elapsed"] <= end)
-        and isinstance(s.get(key), (int, float))
-        and math.isfinite(s[key])
     )
-    return max(candidates, key=lambda s: s[key], default=None)
+    peak = max(((sample, value) for sample, value in candidates
+                if isinstance(value, (int, float)) and math.isfinite(value)),
+               key=lambda pair: pair[1], default=None)
+    return {**peak[0], key: peak[1]} if peak else None
 
 
 class SessionWriter:
@@ -106,7 +125,7 @@ def export_samples(path, samples, metadata=None):
     with open(path, "w", encoding="utf-8", newline="") as output:
         writer = csv.DictWriter(output, fieldnames=keys, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(samples)
+        writer.writerows({key: metric_value(sample, key) for key in keys} for sample in samples)
 
 
 def export_maxima(path, samples, start, end, metadata=None):
@@ -116,7 +135,9 @@ def export_maxima(path, samples, start, end, metadata=None):
                          "range_peak", "range_peak_second", "from_second", "to_second"])
         for key, title, unit in metrics_for(metadata or {}):
             whole, selected = maximum(samples, key), maximum(samples, key, start, end)
-            writer.writerow([title, unit,
-                             whole[key] if whole else "", whole["elapsed"] if whole else "",
-                             selected[key] if selected else "", selected["elapsed"] if selected else "",
+            whole_value, display_unit = display_metric(key, whole[key] if whole else None, unit)
+            selected_value, _ = display_metric(key, selected[key] if selected else None, unit)
+            writer.writerow([title, display_unit,
+                             whole_value if whole else "", whole["elapsed"] if whole else "",
+                             selected_value if selected else "", selected["elapsed"] if selected else "",
                              start, end])

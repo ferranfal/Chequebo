@@ -71,6 +71,8 @@ class SystemMonitor(QThread):
                         "scope": "system", "command": "Whole computer", "interval": self.interval,
                         "cpu_count": psutil.cpu_count() or 1,
                         "physical_cores": psutil.cpu_count(logical=False),
+                        "ram_total_mib": psutil.virtual_memory().total / 1024**2,
+                        "swap_total_mib": psutil.swap_memory().total / 1024**2,
                         "started_at": started_at, "state": "recording",
                     }
                     try:

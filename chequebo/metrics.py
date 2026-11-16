@@ -173,6 +173,7 @@ class SystemSampler:
             "ram_mib": (memory.total - memory.available) / MIB,
             "ram_total_mib": memory.total / MIB,
             "swap_mib": swap.used / MIB,
+            "swap_total_mib": swap.total / MIB,
             "read_mib_s": reads, "write_mib_s": writes,
             "gpu_percent": activity, "vram_mib": vram,
             "processes": len(psutil.pids()),

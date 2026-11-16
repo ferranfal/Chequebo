@@ -1,6 +1,6 @@
 import csv
 import pytest
-from chequebo.session import SessionWriter, load_session, maximum, export_maxima
+from chequebo.session import SessionWriter, load_session, maximum, export_maxima, export_samples
 
 
 def test_maxima_are_independent_and_keep_first_tie():
@@ -37,7 +37,28 @@ def test_maxima_csv_preserves_missing_and_session_peak(tmp_path):
     path = tmp_path / "maxima.csv"
     export_maxima(path, [{"elapsed": 1, "ram_mib": 100}, {"elapsed": 2, "ram_mib": 20}], 2, 2)
     rows = list(csv.DictReader(path.open()))
-    assert rows[0]["recording_peak"] == "100"
-    assert rows[0]["range_peak"] == "20"
+    assert rows[0]["unit"] == "GiB"
+    assert float(rows[0]["recording_peak"]) == 100 / 1024
+    assert float(rows[0]["range_peak"]) == 20 / 1024
     assert rows[5]["recording_peak"] == ""
 
+
+def test_combined_memory_peak_uses_simultaneous_usage_and_exports_units(tmp_path):
+    samples = [{"elapsed": 1, "ram_mib": 64*1024, "swap_mib": 0},
+               {"elapsed": 2, "ram_mib": 48*1024, "swap_mib": 24*1024},
+               {"elapsed": 3, "ram_mib": 32*1024, "swap_mib": 32*1024},
+               {"elapsed": 4, "ram_mib": 64*1024, "swap_mib": None}]
+    peak = maximum(samples, "memory_mib")
+    assert peak["elapsed"] == 2 and peak["memory_mib"] == 72*1024
+    assert maximum(samples, "memory_mib", 4, 4) is None
+    assert "memory_mib" not in samples[1]
+    path = tmp_path / "peaks.csv"
+    export_maxima(path, samples, 3, 3, {"scope": "system"})
+    rows = list(csv.DictReader(path.open()))
+    assert rows[-1]["unit"] == "GiB"
+    assert float(rows[-1]["recording_peak"]) == 72
+    assert float(rows[-1]["range_peak"]) == 64
+    export_samples(path, samples, {"scope": "system"})
+    rows = list(csv.DictReader(path.open()))
+    assert float(rows[1]["memory_mib"]) == 72*1024
+    assert rows[3]["memory_mib"] == ""

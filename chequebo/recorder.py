@@ -80,6 +80,8 @@ class Recorder(QThread):
             "command": self.command, "pid": self.pid, "interval": self.interval,
             "cpu_count": psutil.cpu_count() or 1,
             "physical_cores": psutil.cpu_count(logical=False),
+            "ram_total_mib": psutil.virtual_memory().total / 1024**2,
+            "swap_total_mib": psutil.swap_memory().total / 1024**2,
             "started_at": time.time(), "state": "recording",
         }
         state, error = "stopped", ""

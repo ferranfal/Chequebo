@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chequebo"
-version = "0.3.1"
+version = "0.3.2"
 description = "Linux desktop system monitor with live history and optional recording"
 requires-python = ">=3.10"
 dependencies = [

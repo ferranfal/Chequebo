@@ -19,12 +19,18 @@ from PySide6.QtWidgets import (
 
 from .metrics import GPU
 from .monitor import SystemMonitor
-from .session import clock, export_maxima, export_samples, load_session, maximum, metrics_for
+from .session import clock, display_metric, export_maxima, export_samples, load_session, maximum, metrics_for, metric_value
 
 
 class TimeAxis(pg.AxisItem):
     def tickStrings(self, values, scale, spacing):
         return [clock(value) + (f".{int(value * 10) % 10}" if spacing < 1 else "") for value in values]
+
+
+class MemoryAxis(pg.AxisItem):
+    def boundingRect(self):
+        # Keep zero and the exact capacity visible at the edges, including with a grid.
+        return super().boundingRect().adjusted(0, -15, 0, 15)
 
 
 class Window(QMainWindow):
@@ -34,7 +40,9 @@ class Window(QMainWindow):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.live_samples = []
         self.live_metadata = {"scope": "system", "cpu_count": psutil.cpu_count() or 1,
-                              "physical_cores": psutil.cpu_count(logical=False)}
+                              "physical_cores": psutil.cpu_count(logical=False),
+                              "ram_total_mib": psutil.virtual_memory().total / 1024**2,
+                              "swap_total_mib": psutil.swap_memory().total / 1024**2}
         self.samples, self.metadata = self.live_samples, self.live_metadata
         self.monitor = SystemMonitor(parent=self)
         self.monitor.sample_ready.connect(self.add_sample)
@@ -159,7 +167,7 @@ class Window(QMainWindow):
         grid = QGridLayout()
         self.layout.addLayout(grid)
         chart_specs = [
-            ("ram_mib", "Program + children RAM · PSS memory", "MiB"),
+            ("memory_mib", "System memory · RAM + swap", "GiB"),
             ("cpu_percent", "Program CPU · 100% = all logical CPUs", "%"),
             ("gpu_percent", "GPU · whole system (average across cards)", "%"),
             ("vram_mib", "Program + children VRAM · NVIDIA", "MiB"),
@@ -173,7 +181,12 @@ class Window(QMainWindow):
             label.setWordWrap(True)
             self.value_labels[key] = label
             box.addWidget(label)
-            plot = pg.PlotWidget(axisItems={"bottom": TimeAxis(orientation="bottom")})
+            axes = {"bottom": TimeAxis(orientation="bottom")}
+            if key == "memory_mib":
+                axes["left"] = MemoryAxis(orientation="left")
+            plot = pg.PlotWidget(axisItems=axes)
+            if key == "memory_mib":
+                plot.plotItem.layout.setContentsMargins(1, 12, 1, 1)
             plot.setFixedHeight(180)
             plot.setLabel("left", unit)
             plot.getAxis("left").enableAutoSIPrefix(False)
@@ -190,6 +203,14 @@ class Window(QMainWindow):
             line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#9aaec6"))
             plot.addItem(line)
             self.lines[key] = line
+            if key == "memory_mib":
+                self.ram_limit = pg.InfiniteLine(
+                    angle=0, movable=False, pen=pg.mkPen("#ff6b6b", width=2),
+                    label="Physical RAM: {value:.2f} GiB",
+                    labelOpts={"position": 0.98, "color": "#ff6b6b", "anchors": [(1, 0), (1, 1)]},
+                )
+                self.ram_limit.setZValue(10)
+                plot.addItem(self.ram_limit)
             if key == "read_mib_s":
                 self.curves["write_mib_s"] = plot.plot(pen=pg.mkPen("#e4b76d", width=2), connect="finite")
                 self.curves["write_mib_s"].setDownsampling(auto=True, method="peak")
@@ -272,7 +293,7 @@ class Window(QMainWindow):
         self.metrics = metrics_for(self.metadata)
         system = self.metadata.get("scope") == "system"
         titles = {
-            "ram_mib": "System RAM · total minus available" if system else "Program + children RAM · PSS memory",
+            "memory_mib": "System memory · RAM + swap" if system else "Program memory · PSS RAM + swap",
             "cpu_percent": "System CPU · 100% = all logical CPUs" if system else "Program CPU · 100% = all logical CPUs",
             "gpu_percent": "GPU · whole system (average across cards)",
             "vram_mib": "VRAM · whole system" if system else "Program + children VRAM · NVIDIA",
@@ -286,6 +307,46 @@ class Window(QMainWindow):
         for row, (_, title, _) in enumerate(self.metrics):
             for col in range(5):
                 self.table.setItem(row, col, QTableWidgetItem(title if col == 0 else "—"))
+        self.set_memory_range()
+
+    def ram_capacity_gib(self):
+        def valid(value):
+            return isinstance(value, (int, float)) and math.isfinite(value) and value > 0
+
+        total = self.metadata.get("ram_total_mib")
+        if not valid(total):
+            # System recordings from 0.3.x already contain capacity in each sample.
+            total = next((s["ram_total_mib"] for s in reversed(self.samples)
+                          if valid(s.get("ram_total_mib"))), None)
+        return total / 1024 if valid(total) else None
+
+    def swap_capacity_gib(self):
+        values = [self.metadata.get("swap_total_mib")]
+        if not self.viewing_live:
+            values.extend(sample.get("swap_total_mib") for sample in self.samples)
+        valid = [value for value in values
+                 if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0]
+        return max(valid) / 1024 if valid else None
+
+    def set_memory_range(self):
+        plot = self.plots["memory_mib"]
+        ram, swap = self.ram_capacity_gib(), self.swap_capacity_gib()
+        capacity = ram + swap if ram is not None and swap is not None else None
+        self.ram_limit.setVisible(ram is not None)
+        if ram is not None:
+            self.ram_limit.setValue(ram)
+        if capacity is not None:
+            plot.setYRange(0, capacity, padding=0)
+            # Show the capacity itself as the upper tick, with a few readable steps.
+            step = 2 ** math.ceil(math.log2(capacity / 4))
+            ticks = [index * step for index in range(math.ceil(capacity / step))
+                     if index * step < capacity - step * 0.35] + [capacity]
+            plot.getAxis("left").setTicks([[(value, f"{value:.2f}".rstrip("0").rstrip(".")) for value in ticks]])
+        else:
+            # Never substitute this computer's capacity for a legacy recording.
+            plot.getAxis("left").setTicks(None)
+            peak = maximum(self.samples, "memory_mib")
+            plot.setYRange(0, max(ram or 1, peak["memory_mib"] / 1024 * 1.1 if peak else 1), padding=0)
 
     def new_path(self):
         return self.data_dir / (time.strftime("%Y%m%d-%H%M%S-") + uuid4().hex[:6] + ".chequebo")
@@ -323,6 +384,9 @@ class Window(QMainWindow):
         self.stop_button.setEnabled(False)
 
     def add_sample(self, sample):
+        for key in ("ram_total_mib", "swap_total_mib"):
+            if sample.get(key) is not None:
+                self.live_metadata[key] = sample[key]
         # A time bound and a hard cap keep memory bounded even for long uptimes.
         removed = 0
         cutoff = sample["elapsed"] - 600
@@ -371,6 +435,7 @@ class Window(QMainWindow):
         return sorted((self.start_time.value(), self.end_time.value()))
 
     def refresh(self):
+        self.set_memory_range()
         if not self.samples:
             for curve in self.curves.values():
                 curve.setData([], [])
@@ -400,11 +465,14 @@ class Window(QMainWindow):
         selected = [s for s in self.samples if start - 0.05 <= s["elapsed"] <= end + 0.05]
         x = np.array([s["elapsed"] for s in selected])
         for key, curve in self.curves.items():
-            y = np.array([s[key] if s.get(key) is not None else np.nan for s in selected])
+            values = [metric_value(sample, key) for sample in selected]
+            y = np.array([value if value is not None else np.nan for value in values])
+            if key == "memory_mib":
+                y = y / 1024
             curve.setData(x, y)
         for key, plot in self.plots.items():
             plot.setXRange(start, max(end, start + 1), padding=0)
-            if key not in ("cpu_percent", "gpu_percent"):
+            if key not in ("cpu_percent", "gpu_percent", "memory_mib"):
                 keys = (key, "write_mib_s") if key == "read_mib_s" else (key,)
                 values = [sample[k] for sample in selected for k in keys
                           if isinstance(sample.get(k), (int, float)) and math.isfinite(sample[k])]
@@ -424,8 +492,16 @@ class Window(QMainWindow):
         self.cursor_label.setText("Time: " + clock(sample["elapsed"]))
         for key, line in self.lines.items():
             line.setPos(sample["elapsed"])
-            value = sample.get(key)
-            label = "Unavailable" if value is None else f"{value:.2f} {dict((k,u) for k,_,u in self.metrics)[key]}"
+            value = metric_value(sample, key)
+            display, unit = display_metric(key, value, dict((k,u) for k,_,u in self.metrics)[key])
+            label = "Unavailable" if display is None else f"{display:.2f} {unit}"
+            if key == "memory_mib" and display is not None:
+                ram, swap = self.ram_capacity_gib(), self.swap_capacity_gib()
+                total = f" / {ram + swap:.2f}" if ram is not None and swap is not None else ""
+                label = (f"{display:.2f}{total} GiB used · "
+                         f"RAM {sample['ram_mib'] / 1024:.2f} + swap {sample['swap_mib'] / 1024:.2f} GiB")
+                if not total:
+                    label += " · total capacity unavailable in this recording"
             if key == "cpu_percent" and value is not None and sample.get("cpu_equivalent") is not None:
                 label += f" of total capacity · {sample['cpu_equivalent']:.2f} CPU equivalents"
             if key == "read_mib_s":
@@ -463,7 +539,8 @@ class Window(QMainWindow):
         for row, (key, _, unit) in enumerate(self.metrics):
             for base, peak in [(1, maximum(self.samples, key)),
                                (3, maximum(self.samples, key, start - 0.05, end + 0.05))]:
-                value = f"{peak[key]:.2f} {unit}".strip() if peak else "Unavailable"
+                display, display_unit = display_metric(key, peak[key] if peak else None, unit)
+                value = f"{display:.2f} {display_unit}".strip() if peak else "Unavailable"
                 instant = clock(peak["elapsed"]) if peak else "—"
                 for col, text in [(base, value), (base + 1, instant)]:
                     self.table.item(row, col).setText(text)
