@@ -42,8 +42,8 @@ Maintainer: Chequebo contributors <89909261+ferranfal@users.noreply.github.com>
 Homepage: https://github.com/ferranfal/Chequebo
 Installed-Size: $installed_size
 Depends: libc6 (>= 2.39), libstdc++6, python3, libgl1, libegl1, libopengl0, libxcb-cursor0, libxkbcommon-x11-0, libfontconfig1
-Description: Linux desktop process monitor with history and peak reports
- Record CPU, RAM, disk and NVIDIA metrics, inspect time ranges and
+Description: Linux desktop system monitor with live history and recording
+ Monitor the whole computer, optionally save sessions, inspect time ranges and
  export peak reports. Includes an English Qt desktop interface.
 EOF
 chmod 755 "$stage/DEBIAN"
