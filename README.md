@@ -1,7 +1,7 @@
 # Chequebo
 
-**An English-language Linux desktop process monitor.** Launch a program, record
-its resource usage and come back later to inspect what happened. Free and open
+**An English-language Linux desktop system monitor.** Open it to see your whole
+computer live. Press Record when you want to save a session and inspect it later. Free and open
 source under the MIT license.
 
 ## Install on Ubuntu
@@ -66,102 +66,106 @@ Without the NVIDIA extra, CPU, RAM, disk and recording features still work.
 
 ## Use
 
-1. Enter a command, select its working directory and click **Launch and record**.
-   The source includes an example: `python3 examples/workload.py`.
-2. For a running program, click **Select process and record**.
-3. Choose the full recording, recent minutes or a custom range in seconds since
-   the start. Click a chart or move the slider to inspect a particular time.
-4. The table shows **peaks for the entire recording** alongside peaks within the
-   visible range. Click a peak to find its time in the charts.
-5. Export samples or a peak report to CSV. **Open recording** restores a previous
-   recording even after its program has finished.
+1. Open **Chequebo** from Ubuntu's applications menu. CPU, RAM, disk and supported
+   GPU measurements start automatically. There is no program or PID to enter.
+2. The live panel keeps the **last 10 minutes** in memory without writing a
+   recording to disk. Change the time range or click a chart to inspect history.
+   Enable **Follow latest** to return the cursor to the newest sample.
+3. Press **Record** to start saving the whole computer from that moment onward.
+   Press **Stop recording** to save the session. **Live monitoring continues.**
+4. Click **Open last recording** to inspect its complete history and peak table,
+   including samples older than the live buffer. **Open recording** opens any
+   earlier session. **Back to live** returns to the current computer activity.
+   Monitoring and any active recording continue while you inspect a saved file.
+5. The peak table covers the live buffer or the opened recording, as its heading
+   indicates. It also shows peaks within the selected range. Click a peak to
+   navigate to its time; export a peak report or samples to CSV.
 
-**Stopping a recording or closing the window does not terminate the monitored
-program.** Closing stops collection; minimizing keeps it running. Recordings go
-to `~/.local/share/chequebo` (respecting `XDG_DATA_HOME`). SQLite commits every
-sample so an unexpected shutdown preserves earlier samples. Command output goes
-to the `.log` beside its recording.
+Minimizing keeps monitoring and recording running. Closing the app finishes an
+active recording and stops monitoring. It does not install a background service
+or start automatically at login. Recordings go to `~/.local/share/chequebo`
+(respecting `XDG_DATA_HOME`). Each SQLite sample is committed immediately. Earlier
+committed samples can be recovered after an unexpected shutdown.
 
-Commands run directly with standard input closed. For pipes or redirection,
-explicitly use `bash -lc 'your command'`. This version targets noninteractive jobs.
+Recording saves only the period after pressing Record; the preceding live buffer
+is not added. The first recorded CPU/disk rate is unavailable because its interval
+would include time before Record. Live history is bounded to ten minutes; saved
+recordings keep the full session on disk. Opening a saved file loads it into
+memory, so very large recordings may take time and substantial RAM to explore.
 
 ## Understanding the measurements
 
 | Metric | Scope and meaning |
 |---|---|
-| Program CPU | Sum of observed process CPU time, divided by elapsed time and the machine's logical CPU count. 100% means all logical CPUs are fully occupied. |
-| Logical CPUs worth of work | Secondary reference: 1.0 is the work of one logical CPU running at 100%. It does not count physical cores or identify particular CPUs. |
-| Each logical CPU | **Whole-system** activity at the selected time, including other programs. |
-| RAM PSS | Physical memory of observed processes with shared pages apportioned. Avoids counting every shared page as private memory. |
-| Swap | Sum of Linux-reported swap for observed processes. |
-| Disk I/O | Physical bytes read/written per second from Linux counters. Cached reads can produce zero physical reads. |
-| GPU | Whole-device activity, averaged across cards. This percentage is not attributed to the program. |
-| VRAM | NVIDIA memory attributed to observed PIDs, deduplicated across graphics/compute lists and summed across cards. |
+| System CPU | Mean activity across logical CPUs. 100% means all logical CPUs are fully occupied. |
+| CPU equivalents | 1.0 equals the work of one logical CPU at 100%. It is an equivalent amount of work, not a count of specific busy physical cores. |
+| Each logical CPU | One bar per logical CPU (hardware thread), each from 0 to 100%, at the selected time. |
+| System RAM | Total RAM minus available RAM, including memory used by the OS and all programs. Reclaimable memory remains available. |
+| Swap | Used system swap. |
+| Disk I/O | System disk bytes read/written per second. Cached reads can produce zero physical reads. Layered storage can report activity at multiple device levels. |
+| GPU | Whole-device activity, averaged across detected supported cards. |
+| VRAM | Whole-device used GPU memory, summed across detected supported cards. |
 
-For example, on a machine with 8 logical CPUs, a program fully occupying one
-logical CPU shows approximately **12.5% program CPU** and **1.0 logical CPUs worth
-of work**. On a 16-logical-CPU machine the same work is approximately 6.25%.
-The operating system can move that work between CPUs, so this does not mean the
-program stayed on one particular core. The bottom-right bars show the whole
-computer's activity, with each bar scaled from 0 to 100%.
+On a machine with 8 logical CPUs, **50% system CPU = 4.0 CPU equivalents**. This
+could be eight CPUs partly busy, four fully busy, or another distribution. The
+individual bars show that distribution. Core and logical CPU counts are detected
+automatically, including when a recording was made on a different machine.
 
-The number of logical CPUs is **detected automatically**. No fixed core count is
-hardcoded in the interface. Recordings retain their original machine's topology
-and can be opened on another machine.
+Recordings made with older Chequebo versions still open and keep their original
+program-specific labels: RAM PSS and NVIDIA VRAM attributed to observed processes,
+with global GPU activity. They are not relabeled as whole-computer measurements.
 
 ## NVIDIA and other GPUs
 
-**Check GPU** reports driver access and detected card memory. It also retries
-GPU access during an active recording.
+**Check GPU** reports driver access, detected card memory and whole-system VRAM
+usage. It also retries the monitor's GPU connection.
 
 ```bash
 chequebo --check-gpu
 nvidia-smi
 ```
 
-For a source checkout, use `./run.sh --check-gpu` instead. NVIDIA uses NVML through
-`nvidia-ml-py`, included in the Ubuntu package. It requires a working driver and
-access to `/dev/nvidia*`; PyTorch and the CUDA Toolkit are not required. AMD global
-activity is read when the driver exposes `gpu_busy_percent` in sysfs. AMD/Intel
-per-process VRAM and Intel activity are not implemented. Missing values appear
-as **Unavailable**, never zero. A valid zero VRAM reading can mean the program
-is not using the GPU.
+NVIDIA uses NVML through `nvidia-ml-py`, included in the Ubuntu package. It requires
+a working NVIDIA driver and access to the GPU; PyTorch and the CUDA Toolkit are
+not needed. AMD uses `gpu_busy_percent` and `mem_info_vram_used` when the driver
+exposes them in sysfs. Intel GPU activity is not implemented. Missing measurements
+appear as **Unavailable**, never as zero. On mixed GPU systems, the NVIDIA adapter
+is used when NVIDIA is detected; otherwise the AMD adapter is used.
 
-## Limits
+Sampling intervals range from 0.2 to 60 seconds, defaulting to 1 second. Peaks are
+**observed** maxima; spikes between samples can be missed. CPU and disk rates are
+averages over the sampling interval. Network traffic and power are not measured.
 
-- Sampling intervals range from 0.2 to 60 seconds, defaulting to 1 second. Peaks
-  are the largest **observed** values; spikes between samples can be missed.
-  CPU and disk rates are averages between reads.
-- Observed children are tracked using PID + creation time. Launched programs
-  have their own POSIX session so orphan children in that session can be found.
-  Very short children, children detaching before discovery and work delegated
-  to external services may escape. No cgroups, eBPF or privileged service is used.
-- History before recording cannot be recovered. Very short runs may yield no
-  samples. The first rate read establishes a baseline.
-- Other users' processes and `/proc` restrictions can limit readings. The GUI
-  process picker lists your own user's processes.
-- Per-process network and energy are not measured. Per-logical-CPU activity and
-  global GPU activity are not attributed to a particular program.
-- Samples stay in memory for exploration. This version is designed for
-  individual workloads, not months of continuous monitoring.
+## Headless recording (optional)
 
-## Headless recording
+Record the whole computer without a window; Ctrl+C stops and saves:
+
+```bash
+chequebo --headless --output my-computer.chequebo
+```
+
+For advanced use, command-line process recording remains available:
 
 ```bash
 chequebo --headless --interval 0.5 -- python3 my_program.py
 chequebo --headless --pid 1234
-chequebo --headless --output my-recording.chequebo -- ./my-program
 ```
 
-Ctrl+C stops collection without killing the program. Open the file in the desktop
-app later. `--data-dir /path` changes the recording folder. Source installations
-can substitute `./run.sh` for `chequebo`.
+This mode tracks the program and observed children. It does not terminate them
+when recording stops. Very short children or work delegated to external services
+may escape sampling; access restrictions can limit measurements. Commands run
+with standard input closed, and output goes to a `.log` beside the recording.
+For pipes or redirection, explicitly use `bash -lc 'your command'`.
+
+`--data-dir /path` changes the recording folder. Source installations can
+substitute `./run.sh` for `chequebo`.
 
 ## Development and tests
 
 Small modules, no external service:
 
-- `metrics.py`: process tree, CPU, memory, disk and GPU adapters.
+- `metrics.py`: system and optional process CPU, memory, disk and GPU adapters.
+- `monitor.py`: continuous system worker and independent recording controls.
 - `session.py`: SQLite, peak calculations and CSV export.
 - `recorder.py`: program launch and sampling on a worker thread.
 - `ui.py`: desktop window and chart navigation.
@@ -175,7 +179,8 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
 
 Tests cover peaks, missing values, persistence, real processes, orphan children,
 stopping recordings, VRAM deduplication, chart navigation, packaged launch behavior
-and normalization with 1, 4, 8, 16, 64 and 128 logical CPUs. Linux CI runs on Python
+normalization with 1, 4, 8, 16, 64 and 128 logical CPUs, continuous system
+monitoring, repeated recording sessions and bounded live history. Linux CI runs on Python
 3.10, 3.12 and 3.13. Individual GPU drivers need real-hardware validation.
 
 ### Build the Ubuntu package

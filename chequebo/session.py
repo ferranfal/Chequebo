@@ -19,6 +19,21 @@ METRICS = (
     ("threads", "Program threads", ""),
 )
 
+SYSTEM_METRICS = (
+    ("ram_mib", "System RAM (total − available)", "MiB"),
+    ("swap_mib", "System swap", "MiB"),
+    ("cpu_percent", "System CPU / total capacity", "%"),
+    ("read_mib_s", "System disk read", "MiB/s"),
+    ("write_mib_s", "System disk write", "MiB/s"),
+    ("gpu_percent", "GPU · whole system", "%"),
+    ("vram_mib", "VRAM · whole system", "MiB"),
+    ("processes", "System processes", ""),
+)
+
+
+def metrics_for(metadata):
+    return SYSTEM_METRICS if metadata.get("scope") == "system" else METRICS
+
 
 def clock(seconds):
     seconds = max(0, int(seconds))
@@ -86,23 +101,22 @@ def load_session(path):
         connection.close()
 
 
-def export_samples(path, samples):
-    keys = ["timestamp", "elapsed", *[key for key, _, _ in METRICS], "cpu_equivalent"]
+def export_samples(path, samples, metadata=None):
+    keys = ["timestamp", "elapsed", *[key for key, _, _ in metrics_for(metadata or {})], "cpu_equivalent"]
     with open(path, "w", encoding="utf-8", newline="") as output:
         writer = csv.DictWriter(output, fieldnames=keys, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(samples)
 
 
-def export_maxima(path, samples, start, end):
+def export_maxima(path, samples, start, end, metadata=None):
     with open(path, "w", encoding="utf-8", newline="") as output:
         writer = csv.writer(output)
         writer.writerow(["resource", "unit", "recording_peak", "recording_peak_second",
                          "range_peak", "range_peak_second", "from_second", "to_second"])
-        for key, title, unit in METRICS:
+        for key, title, unit in metrics_for(metadata or {}):
             whole, selected = maximum(samples, key), maximum(samples, key, start, end)
             writer.writerow([title, unit,
                              whole[key] if whole else "", whole["elapsed"] if whole else "",
                              selected[key] if selected else "", selected["elapsed"] if selected else "",
                              start, end])
-

@@ -31,3 +31,13 @@ def test_partial_gpu_failure_is_not_attributed_to_process():
     gpu.nv.nvmlDeviceGetGraphicsRunningProcesses = unsupported
     assert gpu.sample({1}) == (37, None)
 
+
+def test_system_vram_uses_device_memory_instead_of_process_lists():
+    gpu = fake_gpu([NS(pid=1, usedGpuMemory=64*MIB)])
+    gpu.handles = [0, 1]
+    gpu.nv.nvmlDeviceGetMemoryInfo = lambda card: NS(used=(card+1)*1024*MIB)
+    assert gpu.sample() == (37, 3072)
+    def unsupported(_):
+        raise RuntimeError("unavailable")
+    gpu.nv.nvmlDeviceGetMemoryInfo = unsupported
+    assert gpu.sample() == (37, None)

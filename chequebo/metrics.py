@@ -77,13 +77,21 @@ class GPU:
             # NVML has its own exceptions; GPU monitoring is optional.
             self.note = f"GPU unavailable: {exc}"
 
-    def sample(self, pids):
+    def sample(self, pids=None):
+        """None selects whole-device VRAM; a PID set selects process VRAM."""
         if not self.handles:
             try:
                 values = [int(path.read_text()) for path in self.amd]
                 if values:
-                    self.note = "AMD: whole-system activity; per-process VRAM unavailable."
-                return (sum(values) / len(values) if values else None), None
+                    self.note = "AMD: whole-system activity; VRAM when exposed by the driver."
+                memory = None
+                if values and pids is None:
+                    try:
+                        memory = sum(int((path.parent / "mem_info_vram_used").read_text())
+                                     for path in self.amd) / MIB
+                    except (OSError, ValueError):
+                        pass
+                return (sum(values) / len(values) if values else None), memory
             except (OSError, ValueError):
                 return None, None
         activity, memory = [], []
@@ -93,6 +101,13 @@ class GPU:
                 activity.append(self.nv.nvmlDeviceGetUtilizationRates(handle).gpu)
             except self.nv.NVMLError:
                 valid_activity = False
+            if pids is None:
+                self.note = "NVIDIA: whole-system GPU activity and VRAM usage."
+                try:
+                    memory.append(self.nv.nvmlDeviceGetMemoryInfo(handle).used)
+                except self.nv.NVMLError:
+                    valid_memory = False
+                continue
             records = {}
             for query in (self.nv.nvmlDeviceGetComputeRunningProcesses,
                           self.nv.nvmlDeviceGetGraphicsRunningProcesses):
@@ -118,6 +133,56 @@ class GPU:
                 self.nv.nvmlShutdown()
             except self.nv.NVMLError:
                 pass
+
+
+class SystemSampler:
+    """Whole-computer counters, independent of any selected program."""
+
+    def __init__(self):
+        self.started = self.previous = time.monotonic()
+        self.previous_io = self._io()
+        self.first = True
+        self.gpu = GPU()
+        psutil.cpu_percent(percpu=True)
+
+    @staticmethod
+    def _io():
+        try:
+            return psutil.disk_io_counters()
+        except (OSError, psutil.Error):
+            return None
+
+    def sample(self):
+        now = time.monotonic()
+        dt = max(now - self.previous, 0.000001)
+        cpus = psutil.cpu_percent(percpu=True)
+        memory, swap = psutil.virtual_memory(), psutil.swap_memory()
+        io = self._io()
+        reads = writes = None
+        if not self.first and io is not None and self.previous_io is not None:
+            reads = max(0, io.read_bytes - self.previous_io.read_bytes) / dt / MIB
+            writes = max(0, io.write_bytes - self.previous_io.write_bytes) / dt / MIB
+        if self.first:
+            cpus = []
+        activity, vram = self.gpu.sample()
+        result = {
+            "timestamp": time.time(), "elapsed": now - self.started,
+            "cpu_percent": sum(cpus) / len(cpus) if cpus else None,
+            "cpu_equivalent": sum(cpus) / 100 if cpus else None,
+            "cpu_system": cpus,
+            "ram_mib": (memory.total - memory.available) / MIB,
+            "ram_total_mib": memory.total / MIB,
+            "swap_mib": swap.used / MIB,
+            "read_mib_s": reads, "write_mib_s": writes,
+            "gpu_percent": activity, "vram_mib": vram,
+            "processes": len(psutil.pids()),
+            "gpu_note": self.gpu.note, "notes": [], "alive": True,
+        }
+        self.previous, self.previous_io, self.first = now, io, False
+        return result
+
+    def close(self):
+        self.gpu.close()
 
 
 class Sampler:

@@ -13,7 +13,7 @@ from . import __version__
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Chequebo · Linux process monitor")
+    parser = argparse.ArgumentParser(description="Chequebo · Linux system monitor")
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--data-dir", type=Path, default=Path(
         os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "chequebo")
@@ -32,9 +32,9 @@ def main():
         from .metrics import GPU
         gpu = GPU()
         try:
-            activity, memory = gpu.sample({os.getpid()})
+            activity, memory = gpu.sample()
             print(json.dumps({"diagnostic": gpu.note, "whole_system_activity_percent": activity,
-                              "this_process_vram_mib": memory}, ensure_ascii=False, indent=2))
+                              "whole_system_vram_mib": memory}, ensure_ascii=False, indent=2))
         finally:
             gpu.close()
         return 0
@@ -42,10 +42,10 @@ def main():
     if args.pid and command:
         parser.error("Use either a PID or a command, not both.")
     if args.headless:
-        if not args.pid and not command:
-            parser.error("Specify --pid or a command after --.")
         return record_headless(args, command)
-    from PySide6.QtCore import QLocale, QTimer
+    if args.pid or command:
+        parser.error("For optional per-process recording, add --headless. The desktop monitors the whole computer.")
+    from PySide6.QtCore import QLocale
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
     from .ui import Window
@@ -58,12 +58,6 @@ def main():
     window = Window(args.data_dir)
     window.interval.setValue(args.interval)
     window.show()
-    if command:
-        import shlex
-        window.command.setText(shlex.join(command))
-        QTimer.singleShot(0, window.start_command)
-    elif args.pid:
-        QTimer.singleShot(0, lambda: window.begin(args.pid, window.new_path(), f"PID {args.pid}"))
     return app.exec()
 
 
@@ -71,6 +65,7 @@ def record_headless(args, command):
     import shlex
     from PySide6.QtCore import QCoreApplication, QTimer
     from .recorder import Recorder, launch
+    from .monitor import SystemMonitor
     app = QCoreApplication([sys.argv[0]])
     args.data_dir.mkdir(parents=True, exist_ok=True)
     path = args.output or args.data_dir / (time.strftime("%Y%m%d-%H%M%S-") + uuid4().hex[:6] + ".chequebo")
@@ -80,15 +75,27 @@ def record_headless(args, command):
     process = gate = None
     if command:
         process, gate = launch(command, Path.cwd(), path.with_suffix(".log"))
-    recorder = Recorder(process.pid if process else args.pid, path, args.interval,
-                        shlex.join(command) if command else f"PID {args.pid}", process, gate)
+    if process or args.pid:
+        recorder = Recorder(process.pid if process else args.pid, path, args.interval,
+                            shlex.join(command) if command else f"PID {args.pid}", process, gate)
+    else:
+        recorder = SystemMonitor(args.interval)
+        recorder.start_recording(path)
     result = {}
 
     def completed(session_path, metadata):
+        if metadata.get("state") == "recording":
+            return
         result.update(metadata)
         print(json.dumps({"session": session_path, **metadata}, ensure_ascii=False), flush=True)
+        if metadata.get("state") == "error" and isinstance(recorder, SystemMonitor):
+            recorder.stop()
 
-    recorder.completed.connect(completed)
+    if isinstance(recorder, SystemMonitor):
+        recorder.recording_changed.connect(completed)
+        recorder.failed.connect(lambda error: result.update(state="error", error=error))
+    else:
+        recorder.completed.connect(completed)
     recorder.finished.connect(app.quit)
     signal.signal(signal.SIGINT, lambda *_: recorder.stop())
     signal.signal(signal.SIGTERM, lambda *_: recorder.stop())

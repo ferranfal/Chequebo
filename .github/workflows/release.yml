@@ -26,6 +26,8 @@ jobs:
           chequebo --version
           chequebo --check-gpu
           chequebo --headless --interval 0.2 --output /tmp/smoke.chequebo -- /usr/bin/python3 -c 'import time; data=bytearray(8*1024*1024); time.sleep(1)'
+          timeout --preserve-status -s INT 3s chequebo --headless --interval 0.2 --output /tmp/system-smoke.chequebo
+          python -c 'from chequebo.session import load_session; m,s=load_session("/tmp/system-smoke.chequebo"); assert m["scope"] == "system" and m["state"] == "stopped" and len(s) >= 2'
           timeout 5s chequebo || test "$?" = 124
           cd dist
           sha256sum chequebo_*.deb > SHA256SUMS

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chequebo"
-version = "0.2.1"
-description = "Linux desktop process monitor with history and peak reports"
+version = "0.3.0"
+description = "Linux desktop system monitor with live history and optional recording"
 requires-python = ">=3.10"
 dependencies = [
   "PySide6-Essentials>=6.8,<7",

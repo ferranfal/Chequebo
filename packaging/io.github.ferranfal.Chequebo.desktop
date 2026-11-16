@@ -1,12 +1,12 @@
 [Desktop Entry]
 Type=Application
 Name=Chequebo
-GenericName=Process Monitor
-Comment=Record process resources and inspect history and peaks
+GenericName=System Monitor
+Comment=Record system resources and inspect history and peaks
 Exec=chequebo
 Icon=io.github.ferranfal.Chequebo
 Terminal=false
 Categories=System;Monitor;
-Keywords=CPU;GPU;RAM;NVIDIA;process;monitor;performance;
+Keywords=CPU;GPU;RAM;NVIDIA;system;monitor;performance;
 StartupNotify=true
 StartupWMClass=Chequebo

@@ -11,8 +11,9 @@ def samples(cpus):
 
 
 def test_window_supports_other_cpu_counts_and_peak_navigation(tmp_path, app):
-    window = Window(tmp_path)
+    window = Window(tmp_path, auto_start=False)
     try:
+        window.viewing_live = False
         window.metadata = {"cpu_count": 64, "physical_cores": 32}
         window.samples = samples(64)
         window._core_layout(64)
