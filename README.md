@@ -1,11 +1,37 @@
 # Chequebo
 
-**Monitor de procesos de escritorio para Linux.** Lanza un programa, registra su
-consumo y vuelve después para ver qué ocurrió. Software libre con licencia MIT.
+**An English-language Linux desktop process monitor.** Launch a program, record
+its resource usage and come back later to inspect what happened. Free and open
+source under the MIT license.
 
-## Instalación y arranque
+## Install on Ubuntu
 
-Requiere Linux con escritorio y Python 3.10 o superior. No necesita servidor.
+Download `chequebo_0.2.0_amd64.deb` from
+[GitHub Releases](https://github.com/ferranfal/Chequebo/releases/latest).
+The package targets **Ubuntu 24.04 LTS, Intel/AMD 64-bit (amd64)**. It bundles the
+application, Python runtime and Qt interface; APT installs the required system
+libraries. Other Ubuntu versions and ARM packages are not tested yet.
+
+From the folder containing the downloaded file:
+
+```bash
+sudo apt install ./chequebo_0.2.0_amd64.deb
+```
+
+Open **Chequebo** from Ubuntu's applications menu, or run `chequebo` in a
+terminal. No browser, server, Python environment setup or root access is needed
+to run it. On desktops with a `.deb` package installer, opening the downloaded
+file also starts installation. To remove the application:
+
+```bash
+sudo apt remove chequebo
+```
+
+Removing the package leaves your recordings in your user data directory.
+
+## Run from source on Linux
+
+Requires a Linux desktop and Python 3.10 or newer.
 
 ```bash
 git clone https://github.com/ferranfal/Chequebo.git
@@ -14,123 +40,147 @@ cd Chequebo
 ./run.sh
 ```
 
-El instalador usa `uv` si está disponible; en caso contrario usa `venv` y `pip`.
-Instala las dependencias en `.venv`, dentro de esta carpeta, sin cambiar el Python
-del sistema. En Debian/Ubuntu, si falta `venv`: `sudo apt install python3-venv`.
-Si falta `libxcb-cursor0` para X11, el instalador la descarga con APT y la extrae
-dentro de `.venv/native`, sin sudo; `run.sh` la carga solo para Chequebo.
-Si Qt informa de otras bibliotecas gráficas ausentes, instala `libegl1`, `libopengl0`
-y las bibliotecas XCB necesarias mediante el gestor de paquetes de tu distribución.
+The source installer uses `uv` when available, otherwise `venv` and `pip`. It
+installs dependencies into `.venv` inside the project without changing system
+Python. On Ubuntu, install `python3-venv` if needed. If `libxcb-cursor0` is missing
+on X11, the script downloads it using APT and extracts it into `.venv/native`
+without sudo; `run.sh` loads it only for Chequebo. Other missing Qt system
+libraries can be installed with your distribution's package manager.
 
-También puedes instalarlo en tu propio entorno con `pip install '.[nvidia]'` y
-ejecutar `chequebo`. Sin el extra `nvidia`, CPU, RAM, disco y sesiones siguen funcionando.
+You can also use your own environment: `pip install '.[nvidia]'`, then `chequebo`.
+Without the NVIDIA extra, CPU, RAM, disk and recording features still work.
 
-## Uso
+## Use
 
-1. Escribe un comando y elige su carpeta de trabajo. Pulsa **Lanzar y grabar**.
-   Ejemplo incluido: `python3 examples/workload.py`, desde la carpeta del proyecto.
-2. Para un programa ya abierto, pulsa **Elegir proceso y grabar**.
-3. Elige toda la sesión, los últimos minutos o un intervalo en segundos desde
-   el inicio. Pulsa una gráfica o mueve el deslizador para inspeccionar un instante.
-4. La tabla inferior conserva los **máximos de la sesión completa** y los compara
-   con los del intervalo visible. Pulsa un máximo para localizarlo en las gráficas.
-5. Exporta las muestras o el informe de máximos a CSV. **Abrir sesión** recupera
-   una grabación anterior, incluso si su programa ya ha terminado.
+1. Enter a command, select its working directory and click **Launch and record**.
+   The source includes an example: `python3 examples/workload.py`.
+2. For a running program, click **Select process and record**.
+3. Choose the full recording, recent minutes or a custom range in seconds since
+   the start. Click a chart or move the slider to inspect a particular time.
+4. The table shows **peaks for the entire recording** alongside peaks within the
+   visible range. Click a peak to find its time in the charts.
+5. Export samples or a peak report to CSV. **Open recording** restores a previous
+   recording even after its program has finished.
 
-**Parar grabación y cerrar la ventana no terminan el programa monitorizado.**
-Cerrar la ventana sí detiene la recogida de muestras. Minimizarla permite continuar.
-Las sesiones se guardan en `~/.local/share/chequebo` (respeta `XDG_DATA_HOME`).
-Cada muestra se confirma en SQLite; un cierre inesperado no borra las anteriores.
-La salida del comando se guarda en el `.log` situado junto a su sesión.
+**Stopping a recording or closing the window does not terminate the monitored
+program.** Closing stops collection; minimizing keeps it running. Recordings go
+to `~/.local/share/chequebo` (respecting `XDG_DATA_HOME`). SQLite commits every
+sample so an unexpected shutdown preserves earlier samples. Command output goes
+to the `.log` beside its recording.
 
-El comando se ejecuta directamente, sin shell y con entrada estándar cerrada.
-Para tuberías o redirecciones, usa explícitamente `bash -lc 'tu comando'`.
-Esta primera versión está pensada para tareas no interactivas.
+Commands run directly with standard input closed. For pipes or redirection,
+explicitly use `bash -lc 'your command'`. This version targets noninteractive jobs.
 
-## Qué significa cada medida
+## Understanding the measurements
 
-| Medida | Alcance y significado |
+| Metric | Scope and meaning |
 |---|---|
-| CPU del programa | Suma del tiempo de CPU de los procesos observados, dividida por el tiempo transcurrido y las CPU lógicas del equipo. 100 % equivale a ocuparlas todas. |
-| CPU lógicas equivalentes | Referencia secundaria: una unidad es el tiempo de una CPU lógica ocupada al 100 %. No cuenta núcleos físicos ni identifica CPU concretas. |
-| Cada CPU lógica | Actividad del **sistema completo** en el instante seleccionado. Incluye otros programas. |
-| RAM PSS | Memoria física de los procesos observados, prorrateando páginas compartidas. Evita sumar la RSS como si toda la memoria fuera privada. |
-| Swap | Suma de la swap que informa Linux para los procesos observados. |
-| Disco | Bytes realmente leídos/escritos según los contadores de Linux, por segundo. El uso de caché puede producir cero lecturas físicas. |
-| GPU | Actividad global del dispositivo; media entre dispositivos si hay varios. No se atribuye ese porcentaje al programa. |
-| VRAM | Memoria NVIDIA asociada a los PID observados, sin duplicar un mismo PID entre las listas de gráficos y cómputo. Suma entre tarjetas. |
+| Program CPU | Sum of observed process CPU time, divided by elapsed time and the machine's logical CPU count. 100% means all logical CPUs are fully occupied. |
+| Logical CPUs worth of work | Secondary reference: 1.0 is the work of one logical CPU running at 100%. It does not count physical cores or identify particular CPUs. |
+| Each logical CPU | **Whole-system** activity at the selected time, including other programs. |
+| RAM PSS | Physical memory of observed processes with shared pages apportioned. Avoids counting every shared page as private memory. |
+| Swap | Sum of Linux-reported swap for observed processes. |
+| Disk I/O | Physical bytes read/written per second from Linux counters. Cached reads can produce zero physical reads. |
+| GPU | Whole-device activity, averaged across cards. This percentage is not attributed to the program. |
+| VRAM | NVIDIA memory attributed to observed PIDs, deduplicated across graphics/compute lists and summed across cards. |
 
-El número de CPU lógicas **se detecta automáticamente**. No hay un número de
-núcleos codificado en la interfaz. Las sesiones guardan la topología de su equipo
-de origen y pueden abrirse en otro con una configuración diferente.
+For example, on a machine with 8 logical CPUs, a program fully occupying one
+logical CPU shows approximately **12.5% program CPU** and **1.0 logical CPUs worth
+of work**. On a 16-logical-CPU machine the same work is approximately 6.25%.
+The operating system can move that work between CPUs, so this does not mean the
+program stayed on one particular core. The bottom-right bars show the whole
+computer's activity, with each bar scaled from 0 to 100%.
 
-## NVIDIA y otros dispositivos
+The number of logical CPUs is **detected automatically**. No fixed core count is
+hardcoded in the interface. Recordings retain their original machine's topology
+and can be opened on another machine.
 
-**Comprobar GPU** muestra el resultado del acceso al controlador y la memoria de
-las tarjetas detectadas. También permite reintentar la lectura durante una sesión.
+## NVIDIA and other GPUs
+
+**Check GPU** reports driver access and detected card memory. It also retries
+GPU access during an active recording.
 
 ```bash
-./run.sh --check-gpu
+chequebo --check-gpu
 nvidia-smi
 ```
 
-NVIDIA usa NVML, instalada mediante `nvidia-ml-py`; requiere un controlador
-funcional y acceso a los dispositivos `/dev/nvidia*`. No hace falta instalar
-PyTorch ni el CUDA Toolkit. Para AMD se lee la actividad global si el controlador
-expone `gpu_busy_percent` en sysfs. La VRAM AMD/Intel y la actividad Intel no están
-implementadas en esta versión. Una métrica ausente aparece como **No disponible**,
-nunca como cero. Un cero de VRAM válido puede significar que el programa no usa GPU.
+For a source checkout, use `./run.sh --check-gpu` instead. NVIDIA uses NVML through
+`nvidia-ml-py`, included in the Ubuntu package. It requires a working driver and
+access to `/dev/nvidia*`; PyTorch and the CUDA Toolkit are not required. AMD global
+activity is read when the driver exposes `gpu_busy_percent` in sysfs. AMD/Intel
+per-process VRAM and Intel activity are not implemented. Missing values appear
+as **Unavailable**, never zero. A valid zero VRAM reading can mean the program
+is not using the GPU.
 
-## Límites de esta primera versión
+## Limits
 
-- Es un monitor **por muestreo**, de 0,2 a 60 segundos, con 1 segundo por defecto.
-  Los máximos son los mayores valores **observados**; no garantizan capturar picos
-  que ocurran entre muestras. CPU y disco son promedios entre lecturas.
-- Sigue procesos hijos detectados y conserva sus identidades PID + creación.
-  Los programas lanzados tienen su propia sesión POSIX: también se encuentran
-  hijos huérfanos que mantengan esa sesión. Hijos muy breves, hijos que se separen
-  antes de ser detectados y trabajo delegado a servicios externos pueden escapar.
-  No utiliza cgroups, eBPF ni un servicio con privilegios.
-- No puede recuperar historia anterior a la grabación. Las ejecuciones demasiado
-  cortas pueden terminar sin muestras. La primera lectura de tasas sirve de referencia.
-- El acceso a procesos de otros usuarios o restricciones de `/proc` puede impedir
-  algunas medidas. La selección gráfica muestra procesos de tu usuario.
-- No mide red por proceso ni energía por proceso. No atribuye la actividad de
-  cada CPU lógica ni la actividad global de GPU a un programa concreto.
-- Las muestras se conservan en memoria para explorar una sesión. Esta versión
-  prioriza ejecuciones individuales, no monitorización de meses enteros.
+- Sampling intervals range from 0.2 to 60 seconds, defaulting to 1 second. Peaks
+  are the largest **observed** values; spikes between samples can be missed.
+  CPU and disk rates are averages between reads.
+- Observed children are tracked using PID + creation time. Launched programs
+  have their own POSIX session so orphan children in that session can be found.
+  Very short children, children detaching before discovery and work delegated
+  to external services may escape. No cgroups, eBPF or privileged service is used.
+- History before recording cannot be recovered. Very short runs may yield no
+  samples. The first rate read establishes a baseline.
+- Other users' processes and `/proc` restrictions can limit readings. The GUI
+  process picker lists your own user's processes.
+- Per-process network and energy are not measured. Per-logical-CPU activity and
+  global GPU activity are not attributed to a particular program.
+- Samples stay in memory for exploration. This version is designed for
+  individual workloads, not months of continuous monitoring.
 
-## Grabación desde terminal
+## Headless recording
 
 ```bash
-./run.sh --headless --interval 0.5 -- python3 examples/workload.py
-./run.sh --headless --pid 1234
-./run.sh --headless --output mi-sesion.chequebo -- ./mi-programa
+chequebo --headless --interval 0.5 -- python3 my_program.py
+chequebo --headless --pid 1234
+chequebo --headless --output my-recording.chequebo -- ./my-program
 ```
 
-Ctrl+C detiene el registro, sin matar el programa. Puedes abrir el archivo después
-en la ventana. `--data-dir /ruta` cambia la carpeta de sesiones.
+Ctrl+C stops collection without killing the program. Open the file in the desktop
+app later. `--data-dir /path` changes the recording folder. Source installations
+can substitute `./run.sh` for `chequebo`.
 
-## Código y pruebas
+## Development and tests
 
-El código se divide en módulos pequeños, sin servicios externos:
+Small modules, no external service:
 
-- `metrics.py`: procesos, CPU, memoria, disco y adaptador GPU.
-- `session.py`: SQLite, máximos y CSV.
-- `recorder.py`: lanzamiento y recogida en un hilo independiente.
-- `ui.py`: ventana de escritorio y navegación por las gráficas.
-- `__main__.py`: entrada de escritorio y terminal.
+- `metrics.py`: process tree, CPU, memory, disk and GPU adapters.
+- `session.py`: SQLite, peak calculations and CSV export.
+- `recorder.py`: program launch and sampling on a worker thread.
+- `ui.py`: desktop window and chart navigation.
+- `__main__.py`: desktop and headless entry points.
 
 ```bash
-.venv/bin/python -m ensurepip --upgrade
+python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev,nvidia]'
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
 ```
 
-Pruebas para máximos y valores ausentes, guardado, procesos reales, hijos huérfanos,
-parada de grabación, deduplicación de VRAM, navegación y normalización con 1, 4, 8,
-16, 64 y 128 CPU lógicas. La integración continua ejecuta las pruebas en Linux.
-La compatibilidad de cada controlador GPU requiere una comprobación en hardware real.
+Tests cover peaks, missing values, persistence, real processes, orphan children,
+stopping recordings, VRAM deduplication, chart navigation, packaged launch behavior
+and normalization with 1, 4, 8, 16, 64 and 128 logical CPUs. Linux CI runs on Python
+3.10, 3.12 and 3.13. Individual GPU drivers need real-hardware validation.
 
-Licencia del código de Chequebo: [MIT](LICENSE). Sus dependencias conservan sus
-propias licencias.
+### Build the Ubuntu package
+
+Build on Ubuntu 24.04 amd64 with a clean virtual environment:
+
+```bash
+sudo apt install python3-venv libegl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0
+python3 -m venv .build-venv
+.build-venv/bin/python -m pip install -e '.[nvidia,build]'
+CHEQUEBO_BUILD_PYTHON="$PWD/.build-venv/bin/python" ./packaging/build-deb.sh
+```
+
+The `.deb` is written to `dist/`. The package contains a standalone directory
+under `/opt/chequebo`, a `chequebo` command, an application-menu entry and an icon.
+Building requires internet access to install dependencies; running does not.
+Published GitHub releases trigger a clean Ubuntu build and attach the installer
+and its SHA-256 checksum automatically.
+
+Chequebo code: [MIT](LICENSE). Bundled dependencies retain their own licenses,
+included under `/usr/share/doc/chequebo/third-party` in the Ubuntu package. Qt
+libraries remain separate shared libraries in the bundle.

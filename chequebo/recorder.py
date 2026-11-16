@@ -1,4 +1,4 @@
-"""Grabación en un hilo independiente; parar la grabación nunca mata el programa."""
+"""Recording on a worker thread; stopping never kills the monitored program."""
 
 import os
 import shlex
@@ -16,14 +16,14 @@ from .session import SessionWriter
 
 
 def launch(command, cwd, log_path):
-    """Espera a que el muestreador esté preparado antes de ejecutar el comando.
+    """Wait for the sampler to be ready before executing the command.
 
-    No usamos shell=True. Para tuberías el usuario puede pedir explícitamente
-    bash -lc '...'. La sesión POSIX permite seguir hijos cuando termina el padre.
+    No shell=True. Users can explicitly request bash -lc '...' for pipelines.
+    The POSIX session allows tracking children after the parent exits.
     """
     args = shlex.split(command) if isinstance(command, str) else list(command)
     if not args:
-        raise ValueError("Introduce un comando.")
+        raise ValueError("Enter a command.")
     read_fd, write_fd = os.pipe()
     gate = (
         "import os,sys; fd=int(sys.argv[1]); ready=os.read(fd,1); os.close(fd); "
@@ -31,9 +31,24 @@ def launch(command, cwd, log_path):
         "os.execvpe(sys.argv[2],sys.argv[2:],os.environ)"
     )
     try:
+        environment = os.environ.copy()
+        interpreter = sys.executable
+        if getattr(sys, "frozen", False):
+            # A frozen executable is not a Python interpreter. Do not leak its
+            # private shared libraries into the user's program either.
+            interpreter = "/usr/bin/python3"
+            original = environment.pop("LD_LIBRARY_PATH_ORIG", None)
+            if original is None:
+                environment.pop("LD_LIBRARY_PATH", None)
+            else:
+                environment["LD_LIBRARY_PATH"] = original
+            bundle = str(getattr(sys, "_MEIPASS", ""))
+            for key in ("QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH"):
+                if bundle and environment.get(key, "").startswith(bundle):
+                    environment.pop(key)
         with open(log_path, "wb") as output:
             process = subprocess.Popen(
-                [sys.executable, "-c", gate, str(read_fd), *args], cwd=cwd,
+                [interpreter, "-c", gate, str(read_fd), *args], cwd=cwd, env=environment,
                 stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
                 start_new_session=True, pass_fds=(read_fd,),
             )
@@ -72,7 +87,7 @@ class Recorder(QThread):
             store = SessionWriter(self.path, metadata)
             sampler = Sampler(self.pid, own_session=self.process is not None)
             if self.gate is not None:
-                sampler.sample()  # Referencia del proceso de arranque, sin guardarla.
+                sampler.sample()  # Baseline for the launcher process, without saving it.
                 sampler.started = time.monotonic()
                 os.write(self.gate, b"1")
                 os.close(self.gate)
@@ -84,11 +99,11 @@ class Recorder(QThread):
                     sampler.gpu = GPU()
                     self.retry_gpu.clear()
                 if self.process:
-                    self.process.poll()  # Recoge el padre aunque queden hijos vivos.
+                    self.process.poll()  # Reap the parent even while children are alive.
                 sample = sampler.sample()
                 if not sample["alive"]:
                     state = "finished"
-                    break  # No inventamos una muestra final de ceros.
+                    break  # Do not invent a final sample of zeros.
                 store.append(sample)
                 self.sample_ready.emit(sample)
                 self.stop_requested.wait(max(0.0, self.interval - (time.monotonic() - tick)))
@@ -96,7 +111,7 @@ class Recorder(QThread):
             state, error = "error", f"{type(exc).__name__}: {exc}"
         finally:
             if self.gate is not None:
-                os.close(self.gate)  # EOF cancela únicamente el arranque aún pendiente.
+                os.close(self.gate)  # EOF only cancels a launch that is still pending.
                 self.gate = None
             if sampler:
                 sampler.close()
@@ -106,8 +121,7 @@ class Recorder(QThread):
                 try:
                     store.set_meta(metadata)
                 except Exception as exc:
-                    metadata.update(state="error", error=f"No se pudo cerrar la sesión: {exc}")
+                    metadata.update(state="error", error=f"Unable to finalize the recording: {exc}")
                 finally:
                     store.close()
             self.completed.emit(str(self.path), metadata)
-

@@ -46,3 +46,17 @@ def test_nonexistent_command_reports_exit_code_without_fake_samples(tmp_path, ap
     metadata, _ = load_session(path)
     assert metadata["exit_code"] != 0
 
+
+def test_packaged_launcher_uses_system_python_and_restores_libraries(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", "/opt/chequebo/_internal", raising=False)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/chequebo/_internal")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/usr/lib")
+    monkeypatch.setenv("QT_PLUGIN_PATH", "/opt/chequebo/_internal/plugins")
+    code = "import os; print(os.environ.get('LD_LIBRARY_PATH')); print(os.environ.get('QT_PLUGIN_PATH'))"
+    log = tmp_path / "packaged.log"
+    process, gate = launch(["/usr/bin/python3", "-c", code], tmp_path, log)
+    os.write(gate, b"1")
+    os.close(gate)
+    assert process.wait(timeout=5) == 0
+    assert log.read_text().splitlines() == ["/usr/lib", "None"]

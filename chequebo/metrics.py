@@ -1,4 +1,4 @@
-"""Muestreo sin privilegios. CPU y E/S son diferencias de contadores entre muestras."""
+"""Unprivileged sampling. CPU and I/O use counter differences between samples."""
 
 import os
 import time
@@ -11,10 +11,10 @@ GONE = (psutil.NoSuchProcess, psutil.ZombieProcess, ProcessLookupError)
 
 
 class ProcessTree:
-    """Identifica cada proceso por PID + fecha de creación para evitar reutilizar PID.
+    """Identify each process by PID + creation time to guard against PID reuse.
 
-    Al lanzar, también busca la sesión POSIX propia: conserva hijos huérfanos.
-    Al adjuntar, solo puede descubrir hijos que existan durante una muestra.
+    Launched programs also use their own POSIX session to retain orphan children.
+    Attaching can only discover children that exist during a sample.
     """
 
     def __init__(self, pid, own_session=False):
@@ -52,17 +52,17 @@ class ProcessTree:
 
 
 class GPU:
-    """GPU global + VRAM del árbol por NVIDIA; AMD global si expone gpu_busy_percent.
+    """Global GPU + tree VRAM for NVIDIA; global AMD via gpu_busy_percent.
 
-    No atribuimos el uso global de GPU al programa. Los porcentajes de varios
-    dispositivos se presentan como su media, y la VRAM como suma entre tarjetas.
+    Global GPU activity is not attributed to the program. Multiple devices use
+    the mean utilization and the sum of their attributed VRAM.
     """
 
     def __init__(self):
         self.nv = None
         self.handles = []
         self.amd = list(Path("/sys/class/drm").glob("card[0-9]*/device/gpu_busy_percent"))
-        self.note = "GPU no disponible: controlador o permisos sin soporte."
+        self.note = "GPU unavailable: unsupported driver or insufficient permissions."
         try:
             import pynvml
             pynvml.nvmlInit()
@@ -70,19 +70,19 @@ class GPU:
             self.handles = [pynvml.nvmlDeviceGetHandleByIndex(i)
                             for i in range(pynvml.nvmlDeviceGetCount())]
             if self.handles:
-                self.note = "NVIDIA: actividad global; VRAM de los procesos observados."
+                self.note = "NVIDIA: whole-system activity; VRAM of observed processes."
         except (ImportError, RuntimeError, OSError) as exc:
-            self.note = f"GPU no disponible: {exc}"
+            self.note = f"GPU unavailable: {exc}"
         except Exception as exc:
-            # NVML tiene sus propias excepciones; GPU es una función opcional.
-            self.note = f"GPU no disponible: {exc}"
+            # NVML has its own exceptions; GPU monitoring is optional.
+            self.note = f"GPU unavailable: {exc}"
 
     def sample(self, pids):
         if not self.handles:
             try:
                 values = [int(path.read_text()) for path in self.amd]
                 if values:
-                    self.note = "AMD: actividad global; VRAM por proceso no disponible."
+                    self.note = "AMD: whole-system activity; per-process VRAM unavailable."
                 return (sum(values) / len(values) if values else None), None
             except (OSError, ValueError):
                 return None, None
@@ -100,8 +100,8 @@ class GPU:
                     for process in query(handle):
                         if process.pid in pids:
                             value = process.usedGpuMemory
-                            # NVML representa "no disponible" como UINT64_MAX.
-                            # Algunas versiones de pynvml no exportan la constante.
+                            # NVML represents "unavailable" as UINT64_MAX.
+                            # Some pynvml versions do not export the constant.
                             if value is None or value < 0 or value >= (1 << 64) - 1:
                                 valid_memory = False
                             else:
@@ -128,7 +128,7 @@ class Sampler:
         self.previous_wall = time.time()
         self.counters = {}
         self.gpu = GPU()
-        psutil.cpu_percent(percpu=True)  # Primera lectura: establece referencia.
+        psutil.cpu_percent(percpu=True)  # First read establishes a baseline.
 
     def sample(self):
         now, wall = time.monotonic(), time.time()
@@ -142,7 +142,7 @@ class Sampler:
         for identity, process in processes.items():
             try:
                 times = process.cpu_times()
-                cpu_time = times.user + times.system  # No children_*: se contarían dos veces.
+                cpu_time = times.user + times.system  # No children_* counters: that would double-count.
                 threads += process.num_threads()
                 rss += process.memory_info().rss
                 observed.append(process.pid)
@@ -150,7 +150,7 @@ class Sampler:
                 continue
             except psutil.AccessDenied:
                 valid_cpu = valid_io = valid_ram = valid_swap = False
-                notes.add("Hay procesos sin permiso de lectura; las métricas incompletas quedan vacías.")
+                notes.add("Some processes cannot be read; incomplete metrics are left unavailable.")
                 continue
             try:
                 full = process.memory_full_info()
@@ -158,7 +158,7 @@ class Sampler:
                 swap += full.swap
             except (psutil.Error, AttributeError):
                 valid_ram = valid_swap = False
-                notes.add("PSS/swap no disponibles para todo el árbol de procesos.")
+                notes.add("PSS/swap unavailable for the complete process tree.")
             try:
                 io = process.io_counters()
                 reads, writes = io.read_bytes, io.write_bytes
@@ -169,7 +169,7 @@ class Sampler:
             if reads is None:
                 valid_io = False
             old = self.counters.get(identity)
-            # Un hijo nuevo nació dentro del intervalo: sus contadores parten de cero.
+            # A new child was born within this interval: its counters start at zero.
             if old is None and identity[1] >= self.previous_wall:
                 old = (0, 0, 0)
             if old:

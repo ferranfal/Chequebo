@@ -1,4 +1,4 @@
-"""Sesiones SQLite: una muestra por fila, sin servidor ni formatos binarios propios."""
+"""SQLite recordings: one sample per row, no server or custom binary format."""
 
 import csv
 import json
@@ -6,17 +6,17 @@ import math
 import sqlite3
 from pathlib import Path
 
-# key, título, unidad. None significa no disponible; nunca se convierte en cero.
+# key, title, unit. None means unavailable and is never converted to zero.
 METRICS = (
-    ("ram_mib", "RAM del programa (PSS)", "MiB"),
-    ("swap_mib", "Swap del programa", "MiB"),
-    ("cpu_percent", "CPU del programa / total del equipo", "%"),
-    ("read_mib_s", "Lectura de disco", "MiB/s"),
-    ("write_mib_s", "Escritura de disco", "MiB/s"),
-    ("gpu_percent", "GPU · equipo completo", "%"),
-    ("vram_mib", "VRAM del programa · NVIDIA", "MiB"),
-    ("processes", "Procesos observados simultáneamente", ""),
-    ("threads", "Hilos del programa", ""),
+    ("ram_mib", "Program RAM (PSS)", "MiB"),
+    ("swap_mib", "Program swap", "MiB"),
+    ("cpu_percent", "Program CPU / total capacity", "%"),
+    ("read_mib_s", "Disk read", "MiB/s"),
+    ("write_mib_s", "Disk write", "MiB/s"),
+    ("gpu_percent", "GPU · whole system", "%"),
+    ("vram_mib", "Program VRAM · NVIDIA", "MiB"),
+    ("processes", "Concurrent observed processes", ""),
+    ("threads", "Program threads", ""),
 )
 
 
@@ -28,7 +28,7 @@ def clock(seconds):
 
 
 def maximum(samples, key, start=None, end=None):
-    """Máximo de las muestras agregadas; en un empate devuelve el primer instante."""
+    """Maximum of aggregated samples; return the earliest sample on a tie."""
     candidates = (
         s for s in samples
         if (start is None or s["elapsed"] >= start)
@@ -60,7 +60,7 @@ class SessionWriter:
             "INSERT INTO samples (elapsed, payload) VALUES (?, ?)",
             (sample["elapsed"], json.dumps(sample, allow_nan=False)),
         )
-        self.connection.commit()  # Cada muestra sobrevive a un cierre inesperado.
+        self.connection.commit()  # Every committed sample survives an unexpected shutdown.
 
     def close(self):
         self.connection.close()
@@ -72,16 +72,16 @@ def load_session(path):
     try:
         metadata = {k: json.loads(v) for k, v in connection.execute("SELECT key, value FROM meta")}
         if metadata.get("format") != "chequebo" or metadata.get("version") != 1:
-            raise ValueError("Este archivo no es una sesión compatible de Chequebo.")
+            raise ValueError("This file is not a supported Chequebo recording.")
         samples = [json.loads(row[0]) for row in connection.execute(
             "SELECT payload FROM samples ORDER BY seq"
         )]
         for sample in samples:
             if not isinstance(sample, dict) or not isinstance(sample.get("elapsed"), (float, int)):
-                raise ValueError("La sesión contiene muestras inválidas.")
+                raise ValueError("The recording contains invalid samples.")
         return metadata, samples
     except (sqlite3.Error, json.JSONDecodeError) as exc:
-        raise ValueError(f"No se puede leer la sesión: {exc}") from exc
+        raise ValueError(f"Unable to read the recording: {exc}") from exc
     finally:
         connection.close()
 
@@ -97,8 +97,8 @@ def export_samples(path, samples):
 def export_maxima(path, samples, start, end):
     with open(path, "w", encoding="utf-8", newline="") as output:
         writer = csv.writer(output)
-        writer.writerow(["recurso", "unidad", "maximo_sesion", "segundo_sesion",
-                         "maximo_intervalo", "segundo_intervalo", "desde", "hasta"])
+        writer.writerow(["resource", "unit", "recording_peak", "recording_peak_second",
+                         "range_peak", "range_peak_second", "from_second", "to_second"])
         for key, title, unit in METRICS:
             whole, selected = maximum(samples, key), maximum(samples, key, start, end)
             writer.writerow([title, unit,

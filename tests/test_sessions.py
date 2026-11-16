@@ -37,7 +37,7 @@ def test_maxima_csv_preserves_missing_and_session_peak(tmp_path):
     path = tmp_path / "maxima.csv"
     export_maxima(path, [{"elapsed": 1, "ram_mib": 100}, {"elapsed": 2, "ram_mib": 20}], 2, 2)
     rows = list(csv.DictReader(path.open()))
-    assert rows[0]["maximo_sesion"] == "100"
-    assert rows[0]["maximo_intervalo"] == "20"
-    assert rows[5]["maximo_sesion"] == ""
+    assert rows[0]["recording_peak"] == "100"
+    assert rows[0]["range_peak"] == "20"
+    assert rows[5]["recording_peak"] == ""
 

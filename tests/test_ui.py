@@ -27,7 +27,7 @@ def test_window_supports_other_cpu_counts_and_peak_navigation(tmp_path, app):
         window.jump_to_peak(0, 1)
         assert window.cursor.value() == 0
         assert window.bounds()[0] == 0
-        assert window.value_labels["gpu_percent"].text() == "No disponible"
+        assert window.value_labels["gpu_percent"].text() == "Unavailable"
         assert window.table.item(0, 1).data(Qt.ItemDataRole.UserRole) == 1
     finally:
         window.close()

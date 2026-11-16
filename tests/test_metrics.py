@@ -11,7 +11,7 @@ from chequebo import metrics
 
 
 class NoGPU:
-    note = "GPU no disponible"
+    note = "GPU unavailable"
     def sample(self, pids):
         return None, None
     def close(self):

@@ -1,6 +1,6 @@
-"""Carga local de unos 12 segundos: CPU, RAM, disco y un proceso hijo.
+"""A local 12-second workload: CPU, RAM, disk and a child process.
 
-Ejecutar desde Chequebo: python3 examples/workload.py
+Run from Chequebo: python3 examples/workload.py
 """
 
 import multiprocessing as mp
@@ -18,7 +18,7 @@ def worker():
 
 
 if __name__ == "__main__":
-    print("Chequebo: iniciando ejemplo", flush=True)
+    print("Chequebo: starting example workload", flush=True)
     child = mp.Process(target=worker)
     child.start()
     memory = bytearray(80 * 1024 * 1024)
@@ -32,7 +32,7 @@ if __name__ == "__main__":
         time.sleep(3)
     child.join()
     del memory
-    print("Memoria liberada; esperando para ver la bajada", flush=True)
+    print("Memory released; waiting to show the drop", flush=True)
     time.sleep(6)
-    print("Ejemplo terminado", flush=True)
+    print("Example finished", flush=True)
 

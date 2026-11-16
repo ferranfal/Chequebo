@@ -1,4 +1,4 @@
-"""Ventana Qt. El muestreo y la persistencia viven fuera del hilo de la interfaz."""
+"""Qt window. Sampling and persistence run outside the UI thread."""
 
 import bisect
 import math
@@ -31,13 +31,13 @@ class TimeAxis(pg.AxisItem):
 class ProcessDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
-        self.setWindowTitle("Elegir un proceso · Chequebo")
+        self.setWindowTitle("Choose a process · Chequebo")
         self.resize(700, 450)
         layout = QVBoxLayout(self)
-        self.search = QLineEdit(placeholderText="Filtrar por nombre o PID")
+        self.search = QLineEdit(placeholderText="Filter by name or PID")
         layout.addWidget(self.search)
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["PID", "Programa", "Comando"])
+        self.table.setHorizontalHeaderLabels(["PID", "Program", "Command"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -85,7 +85,7 @@ class Window(QMainWindow):
         self.session_path = None
         self.plots, self.curves, self.lines, self.value_labels = {}, {}, {}, {}
         self.core_bars = []
-        self.setWindowTitle("Chequebo · Monitor de procesos para Linux")
+        self.setWindowTitle("Chequebo · Linux process monitor")
         self.resize(1220, 920)
         pg.setConfigOptions(antialias=True, background="#151a22", foreground="#dce5f1")
         self.setStyleSheet("""
@@ -114,36 +114,36 @@ class Window(QMainWindow):
         self._build_time_controls()
         self._build_charts()
         self._build_maxima()
-        self.status = QLabel("Elige un comando o un proceso. Todas las mediciones se guardan localmente.")
+        self.status = QLabel("Choose a command or a process. All measurements are saved locally.")
         self.status.setWordWrap(True)
         self.layout.addWidget(self.status)
         self._core_layout(psutil.cpu_count() or 1)
 
     def _build_launch(self):
-        group = QGroupBox("Chequebo · Nueva sesión")
+        group = QGroupBox("Chequebo · New recording")
         grid = QGridLayout(group)
-        self.command = QLineEdit(placeholderText="Comando y argumentos, por ejemplo: python3 mi_programa.py")
+        self.command = QLineEdit(placeholderText="Command and arguments, e.g. python3 my_program.py")
         self.cwd = QLineEdit(str(Path.cwd()))
-        self.cwd.setToolTip("Carpeta de trabajo del programa")
-        browse = QPushButton("Carpeta…")
+        self.cwd.setToolTip("Working directory for the program")
+        browse = QPushButton("Browse…")
         browse.clicked.connect(self.choose_cwd)
         self.interval = QDoubleSpinBox()
         self.interval.setRange(0.2, 60)
         self.interval.setValue(1)
-        self.interval.setSuffix(" s / muestra")
-        self.interval.setToolTip("Un intervalo menor captura más detalle y consume más recursos.")
+        self.interval.setSuffix(" s / sample")
+        self.interval.setToolTip("A shorter interval captures more detail and uses more resources.")
         grid.addWidget(self.command, 0, 0, 1, 3)
         grid.addWidget(self.cwd, 1, 0)
         grid.addWidget(browse, 1, 1)
         grid.addWidget(self.interval, 1, 2)
         controls = QHBoxLayout()
-        self.start_button = QPushButton("▶ Lanzar y grabar")
-        self.attach_button = QPushButton("● Elegir proceso y grabar")
-        self.stop_button = QPushButton("■ Parar grabación")
+        self.start_button = QPushButton("▶ Launch and record")
+        self.attach_button = QPushButton("● Select process and record")
+        self.stop_button = QPushButton("■ Stop recording")
         self.stop_button.setEnabled(False)
-        self.stop_button.setToolTip("Solo detiene el registro; el programa continúa ejecutándose.")
-        self.open_button = QPushButton("Abrir sesión…")
-        gpu = QPushButton("Comprobar GPU")
+        self.stop_button.setToolTip("Stops recording only; the monitored program keeps running.")
+        self.open_button = QPushButton("Open recording…")
+        gpu = QPushButton("Check GPU")
         self.start_button.clicked.connect(self.start_command)
         self.attach_button.clicked.connect(self.attach_dialog)
         self.stop_button.clicked.connect(lambda: self.recorder.stop() if self.recorder else None)
@@ -157,22 +157,22 @@ class Window(QMainWindow):
         self.layout.addWidget(group)
 
     def _build_time_controls(self):
-        group = QGroupBox("Intervalo de las gráficas")
+        group = QGroupBox("Chart time range")
         row = QHBoxLayout(group)
-        self.follow = QCheckBox("Seguir grabación")
+        self.follow = QCheckBox("Follow recording")
         self.follow.setChecked(True)
         self.range_mode = QComboBox()
-        for label, seconds in [("Toda la sesión", 0), ("Últimos 2 minutos", 120), ("Últimos 5 minutos", 300)]:
+        for label, seconds in [("Full recording", 0), ("Last 2 minutes", 120), ("Last 5 minutes", 300)]:
             self.range_mode.addItem(label, seconds)
-        self.range_mode.addItem("Intervalo personalizado", -1)
+        self.range_mode.addItem("Custom range", -1)
         self.start_time, self.end_time = QDoubleSpinBox(), QDoubleSpinBox()
         for spin in [self.start_time, self.end_time]:
             spin.setRange(0, 100000000)
             spin.setDecimals(1)
             spin.setSuffix(" s")
-        self.start_time.setToolTip("Segundos desde el inicio")
-        self.end_time.setToolTip("Segundos desde el inicio")
-        for widget in [self.follow, self.range_mode, QLabel("Desde"), self.start_time, QLabel("Hasta"), self.end_time]:
+        self.start_time.setToolTip("Seconds since recording started")
+        self.end_time.setToolTip("Seconds since recording started")
+        for widget in [self.follow, self.range_mode, QLabel("From"), self.start_time, QLabel("To"), self.end_time]:
             row.addWidget(widget)
         self.follow.toggled.connect(lambda _: self.refresh())
         self.range_mode.currentIndexChanged.connect(self.preset_changed)
@@ -184,16 +184,16 @@ class Window(QMainWindow):
         grid = QGridLayout()
         self.layout.addLayout(grid)
         chart_specs = [
-            ("ram_mib", "RAM del programa + hijos · memoria PSS", "MiB"),
-            ("cpu_percent", "CPU del programa · 100 % = todo el equipo", "%"),
-            ("gpu_percent", "GPU · equipo completo (media entre tarjetas)", "%"),
-            ("vram_mib", "VRAM del programa + hijos · NVIDIA", "MiB"),
-            ("read_mib_s", "Disco del programa · lectura / escritura", "MiB/s"),
+            ("ram_mib", "Program + children RAM · PSS memory", "MiB"),
+            ("cpu_percent", "Program CPU · 100% = all logical CPUs", "%"),
+            ("gpu_percent", "GPU · whole system (average across cards)", "%"),
+            ("vram_mib", "Program + children VRAM · NVIDIA", "MiB"),
+            ("read_mib_s", "Program disk I/O · read / write", "MiB/s"),
         ]
         for index, (key, title, unit) in enumerate(chart_specs):
             group = QGroupBox(title)
             box = QVBoxLayout(group)
-            label = QLabel("Sin muestras")
+            label = QLabel("No samples")
             label.setWordWrap(True)
             self.value_labels[key] = label
             box.addWidget(label)
@@ -201,7 +201,7 @@ class Window(QMainWindow):
             plot.setFixedHeight(180)
             plot.setLabel("left", unit)
             plot.getAxis("left").enableAutoSIPrefix(False)
-            plot.setLabel("bottom", "Tiempo desde el inicio")
+            plot.setLabel("bottom", "Time since recording started")
             plot.showGrid(x=True, y=True, alpha=0.15)
             plot.setMouseEnabled(x=False, y=False)
             plot.setMenuEnabled(False)
@@ -221,7 +221,7 @@ class Window(QMainWindow):
             plot.scene().sigMouseClicked.connect(lambda event, p=plot: self.chart_clicked(p, event))
             box.addWidget(plot)
             grid.addWidget(group, index // 2, index % 2)
-        self.cores_group = QGroupBox("Cada CPU lógica · equipo completo · instante seleccionado")
+        self.cores_group = QGroupBox("Each logical CPU · whole system · selected time")
         cores_box = QVBoxLayout(self.cores_group)
         area = QScrollArea()
         area.setWidgetResizable(True)
@@ -231,7 +231,7 @@ class Window(QMainWindow):
         self.core_grid = QGridLayout(self.core_widget)
         area.setWidget(self.core_widget)
         cores_box.addWidget(area)
-        self.core_time = QLabel("Selecciona un instante para ver el reparto de CPU.")
+        self.core_time = QLabel("Select a time to inspect logical CPU activity.")
         self.core_time.setWordWrap(True)
         cores_box.addWidget(self.core_time)
         grid.addWidget(self.cores_group, 2, 1)
@@ -239,17 +239,17 @@ class Window(QMainWindow):
         self.cursor = QSlider(Qt.Orientation.Horizontal)
         self.cursor.setRange(0, 0)
         self.cursor.valueChanged.connect(self.update_cursor)
-        self.cursor_label = QLabel("Instante: —")
+        self.cursor_label = QLabel("Time: —")
         cursor_row.addWidget(self.cursor_label)
         cursor_row.addWidget(self.cursor, 1)
         self.layout.addLayout(cursor_row)
 
     def _build_maxima(self):
-        group = QGroupBox("Máximos registrados · programa + procesos hijos, excepto GPU global")
+        group = QGroupBox("Recorded peaks · program + children, except whole-system GPU")
         box = QVBoxLayout(group)
         actions = QHBoxLayout()
-        maxima_button = QPushButton("Exportar informe de máximos…")
-        data_button = QPushButton("Exportar muestras CSV…")
+        maxima_button = QPushButton("Export peak report…")
+        data_button = QPushButton("Export samples to CSV…")
         maxima_button.clicked.connect(lambda: self.export(True))
         data_button.clicked.connect(lambda: self.export(False))
         actions.addWidget(maxima_button)
@@ -257,7 +257,7 @@ class Window(QMainWindow):
         actions.addStretch()
         box.addLayout(actions)
         self.table = QTableWidget(len(METRICS), 5)
-        self.table.setHorizontalHeaderLabels(["Recurso", "Máximo sesión", "Instante", "Máximo intervalo", "Instante"])
+        self.table.setHorizontalHeaderLabels(["Resource", "Recording peak", "Time", "Range peak", "Time"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().hide()
@@ -270,7 +270,7 @@ class Window(QMainWindow):
         self.table.setMinimumHeight(320)
         self.table.cellClicked.connect(self.jump_to_peak)
         box.addWidget(self.table)
-        note = QLabel("Pulsa un máximo para inspeccionarlo. Son máximos muestreados: pueden quedar picos entre muestras. Los máximos de cada recurso pueden ocurrir en instantes distintos.")
+        note = QLabel("Click a peak to inspect it. Peaks are sampled: brief spikes can occur between samples. Each resource may peak at a different time.")
         note.setWordWrap(True)
         box.addWidget(note)
         self.layout.addWidget(group)
@@ -292,10 +292,10 @@ class Window(QMainWindow):
             self.core_grid.addWidget(bar, row, col + 1)
             self.core_bars.append(bar)
         physical = self.metadata.get("physical_cores", psutil.cpu_count(logical=False))
-        self.machine.setText(f"Equipo de esta sesión: {physical or '?'} núcleos físicos · {count} CPU lógicas. CPU del programa: porcentaje del total de CPU lógicas.")
+        self.machine.setText(f"Recording hardware: {physical or '?'} physical cores · {count} logical CPUs. Program CPU is a percentage of total logical CPU capacity.")
 
     def choose_cwd(self):
-        directory = QFileDialog.getExistingDirectory(self, "Carpeta de trabajo", self.cwd.text())
+        directory = QFileDialog.getExistingDirectory(self, "Working directory", self.cwd.text())
         if directory:
             self.cwd.setText(directory)
 
@@ -310,7 +310,7 @@ class Window(QMainWindow):
             process, gate = launch(self.command.text(), self.cwd.text(), path.with_suffix(".log"))
             self.begin(process.pid, path, self.command.text(), process, gate)
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "No se puede iniciar", str(exc))
+            QMessageBox.warning(self, "Unable to start", str(exc))
 
     def attach_dialog(self):
         dialog = ProcessDialog(self)
@@ -319,10 +319,10 @@ class Window(QMainWindow):
             try:
                 process = psutil.Process(pid)
                 if process.create_time() != created:
-                    raise ValueError("El proceso elegido ha terminado. Elige otro.")
+                    raise ValueError("The selected process has ended. Choose another one.")
                 self.begin(pid, self.new_path(), " ".join(process.cmdline()) or process.name())
             except (psutil.Error, ValueError) as exc:
-                QMessageBox.warning(self, "No se puede adjuntar", str(exc))
+                QMessageBox.warning(self, "Unable to attach", str(exc))
 
     def begin(self, pid, path, command, process=None, gate=None):
         self.samples = []
@@ -338,7 +338,7 @@ class Window(QMainWindow):
         self.recorder.finished.connect(self.recording_thread_finished)
         self.recording_enabled(True)
         self.refresh()
-        self.setWindowTitle(f"Chequebo · grabando · {command}")
+        self.setWindowTitle(f"Chequebo · recording · {command}")
         self.recorder.start()
 
     def recording_enabled(self, active):
@@ -350,15 +350,15 @@ class Window(QMainWindow):
         self.samples.append(sample)
         self.refresh()
         notes = " · ".join(sample["notes"])
-        self.status.setText(f"● Grabando · {sample['processes']} procesos · {sample['threads']} hilos · {self.session_path}\n{sample['gpu_note']}" + (f"\n{notes}" if notes else ""))
+        self.status.setText(f"● Recording · {sample['processes']} processes · {sample['threads']} threads · {self.session_path}\n{sample['gpu_note']}" + (f"\n{notes}" if notes else ""))
 
     def recording_completed(self, path, metadata):
         self.metadata.update(metadata)
-        state = {"finished": "Programa e hijos observados finalizados", "stopped": "Grabación detenida; el programa puede continuar", "error": "Error de grabación"}[metadata["state"]]
-        exit_info = f" · código de salida {metadata['exit_code']}" if metadata.get("exit_code") is not None else ""
-        empty = " · sin muestras: ejecución demasiado breve" if not self.samples else ""
-        self.status.setText(f"{state}{exit_info}{empty}\nSesión: {path}" + ("\n" + metadata["error"] if metadata.get("error") else ""))
-        self.setWindowTitle("Chequebo · sesión guardada")
+        state = {"finished": "Program and observed children have finished", "stopped": "Recording stopped; the program may still be running", "error": "Recording error"}[metadata["state"]]
+        exit_info = f" · exit code {metadata['exit_code']}" if metadata.get("exit_code") is not None else ""
+        empty = " · no samples: program finished too quickly" if not self.samples else ""
+        self.status.setText(f"{state}{exit_info}{empty}\nRecording: {path}" + ("\n" + metadata["error"] if metadata.get("error") else ""))
+        self.setWindowTitle("Chequebo · recording saved")
 
     def recording_thread_finished(self):
         self.recording_enabled(False)
@@ -387,9 +387,9 @@ class Window(QMainWindow):
             for curve in self.curves.values():
                 curve.setData([], [])
             for label in self.value_labels.values():
-                label.setText("Sin muestras")
+                label.setText("No samples")
             self.cursor.setRange(0, 0)
-            self.cursor_label.setText("Instante: —")
+            self.cursor_label.setText("Time: —")
             for bar in self.core_bars:
                 bar.setValue(0)
                 bar.setFormat("—")
@@ -407,7 +407,7 @@ class Window(QMainWindow):
                 spin.setValue(value)
                 spin.blockSignals(False)
         start, end = self.bounds()
-        # Margen por la precisión decimal del selector, sin descartar la última muestra.
+        # Allow for the selector precision without dropping the latest sample.
         selected = [s for s in self.samples if start - 0.05 <= s["elapsed"] <= end + 0.05]
         x = np.array([s["elapsed"] for s in selected])
         for key, curve in self.curves.items():
@@ -434,16 +434,16 @@ class Window(QMainWindow):
         if not self.samples:
             return
         sample = self.samples[min(index, len(self.samples) - 1)]
-        self.cursor_label.setText("Instante: " + clock(sample["elapsed"]))
+        self.cursor_label.setText("Time: " + clock(sample["elapsed"]))
         for key, line in self.lines.items():
             line.setPos(sample["elapsed"])
             value = sample.get(key)
-            label = "No disponible" if value is None else f"{value:.2f} {dict((k,u) for k,_,u in METRICS)[key]}"
+            label = "Unavailable" if value is None else f"{value:.2f} {dict((k,u) for k,_,u in METRICS)[key]}"
             if key == "cpu_percent" and value is not None:
-                label += f" del equipo · {sample['cpu_equivalent']:.2f} CPU lógicas equivalentes"
+                label += f" of total capacity · {sample['cpu_equivalent']:.2f} logical CPUs worth of work"
             if key == "read_mib_s":
                 write = sample.get("write_mib_s")
-                label = f"Lectura: {label} · escritura: " + (f"{write:.2f} MiB/s" if write is not None else "no disponible")
+                label = f"Read: {label} · write: " + (f"{write:.2f} MiB/s" if write is not None else "unavailable")
             self.value_labels[key].setText(label)
         cpus = sample.get("cpu_system", [])
         if cpus and len(cpus) != len(self.core_bars):
@@ -452,7 +452,7 @@ class Window(QMainWindow):
             available = i < len(cpus)
             bar.setValue(round(cpus[i]) if available else 0)
             bar.setFormat("%p%" if available else "—")
-        self.core_time.setText(f"{clock(sample['elapsed'])} · actividad de todo el equipo, incluido el resto de programas. Cada barra va de 0 a 100 %.")
+        self.core_time.setText(f"{clock(sample['elapsed'])} · whole-system activity, including other programs. Each bar ranges from 0 to 100%.")
 
     def chart_clicked(self, plot, event):
         if not self.samples or not plot.sceneBoundingRect().contains(event.scenePos()):
@@ -475,7 +475,7 @@ class Window(QMainWindow):
         for row, (key, _, unit) in enumerate(METRICS):
             for base, peak in [(1, maximum(self.samples, key)),
                                (3, maximum(self.samples, key, start - 0.05, end + 0.05))]:
-                value = f"{peak[key]:.2f} {unit}".strip() if peak else "No disponible"
+                value = f"{peak[key]:.2f} {unit}".strip() if peak else "Unavailable"
                 instant = clock(peak["elapsed"]) if peak else "—"
                 for col, text in [(base, value), (base + 1, instant)]:
                     self.table.item(row, col).setText(text)
@@ -495,7 +495,7 @@ class Window(QMainWindow):
             self.select_time(elapsed)
 
     def open_session(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Abrir sesión", str(self.data_dir), "Sesiones Chequebo (*.chequebo)")
+        path, _ = QFileDialog.getOpenFileName(self, "Open recording", str(self.data_dir), "Chequebo recordings (*.chequebo)")
         if path:
             try:
                 self.metadata, self.samples = load_session(path)
@@ -505,17 +505,17 @@ class Window(QMainWindow):
                 self.follow.setChecked(True)
                 self.refresh()
                 state = self.metadata.get("state", "unknown")
-                warning = " · grabación interrumpida; se recuperan las muestras guardadas" if state == "recording" else ""
-                self.status.setText(f"Sesión abierta{warning}: {path}\n{self.metadata.get('command', '')}")
+                warning = " · recording was interrupted; saved samples recovered" if state == "recording" else ""
+                self.status.setText(f"Recording opened{warning}: {path}\n{self.metadata.get('command', '')}")
             except (OSError, ValueError, KeyError) as exc:
-                QMessageBox.warning(self, "No se puede abrir", str(exc))
+                QMessageBox.warning(self, "Unable to open", str(exc))
 
     def export(self, maxima):
         if not self.samples:
-            QMessageBox.information(self, "Sin datos", "Primero graba o abre una sesión.")
+            QMessageBox.information(self, "No data", "Record a program or open a recording first.")
             return
-        default = self.data_dir / ("chequebo-maximos.csv" if maxima else "chequebo-muestras.csv")
-        path, _ = QFileDialog.getSaveFileName(self, "Exportar CSV", str(default), "CSV (*.csv)")
+        default = self.data_dir / ("chequebo-peaks.csv" if maxima else "chequebo-samples.csv")
+        path, _ = QFileDialog.getSaveFileName(self, "Export CSV", str(default), "CSV (*.csv)")
         if path:
             try:
                 if maxima:
@@ -524,7 +524,7 @@ class Window(QMainWindow):
                 else:
                     export_samples(path, self.samples)
             except OSError as exc:
-                QMessageBox.warning(self, "Error al exportar", str(exc))
+                QMessageBox.warning(self, "Export failed", str(exc))
 
     def check_gpu(self):
         gpu = GPU()
@@ -536,13 +536,13 @@ class Window(QMainWindow):
                     name = gpu.nv.nvmlDeviceGetName(handle)
                     memory = gpu.nv.nvmlDeviceGetMemoryInfo(handle)
                     details.append(f"{name} · {memory.total / 1024**3:.1f} GiB VRAM")
-            details.append(f"Actividad global: {usage:.0f} %" if usage is not None else "No se puede leer la actividad de la GPU.")
-            details.append("La actividad corresponde a toda la tarjeta. La VRAM se atribuye a los PID observados cuando el controlador lo permite.")
+            details.append(f"Whole-system activity: {usage:.0f} %" if usage is not None else "GPU activity is unavailable.")
+            details.append("Activity covers the entire card. VRAM is attributed to observed PIDs when supported by the driver.")
             if self.recorder and self.recorder.isRunning():
                 self.recorder.retry_gpu.set()
-            QMessageBox.information(self, "Diagnóstico de GPU · Chequebo", "\n\n".join(details))
+            QMessageBox.information(self, "GPU diagnostics · Chequebo", "\n\n".join(details))
         except Exception as exc:
-            QMessageBox.warning(self, "Diagnóstico de GPU", str(exc))
+            QMessageBox.warning(self, "GPU diagnostics", str(exc))
         finally:
             gpu.close()
 
@@ -550,7 +550,7 @@ class Window(QMainWindow):
         if self.recorder and self.recorder.isRunning():
             self.recorder.stop()
             if not self.recorder.wait(5000):
-                self.status.setText("Terminando de guardar la sesión; vuelve a cerrar en unos segundos.")
+                self.status.setText("Finishing the recording; try closing again in a few seconds.")
                 event.ignore()
                 return
         event.accept()
