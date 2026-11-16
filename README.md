@@ -17,8 +17,10 @@ cd Chequebo
 El instalador usa `uv` si está disponible; en caso contrario usa `venv` y `pip`.
 Instala las dependencias en `.venv`, dentro de esta carpeta, sin cambiar el Python
 del sistema. En Debian/Ubuntu, si falta `venv`: `sudo apt install python3-venv`.
-Si Qt informa de bibliotecas gráficas ausentes, instala `libegl1`, `libopengl0`
-y, para X11, `libxcb-cursor0` mediante el gestor de paquetes de tu distribución.
+Si falta `libxcb-cursor0` para X11, el instalador la descarga con APT y la extrae
+dentro de `.venv/native`, sin sudo; `run.sh` la carga solo para Chequebo.
+Si Qt informa de otras bibliotecas gráficas ausentes, instala `libegl1`, `libopengl0`
+y las bibliotecas XCB necesarias mediante el gestor de paquetes de tu distribución.
 
 También puedes instalarlo en tu propio entorno con `pip install '.[nvidia]'` y
 ejecutar `chequebo`. Sin el extra `nvidia`, CPU, RAM, disco y sesiones siguen funcionando.
