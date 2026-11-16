@@ -183,6 +183,10 @@ normalization with 1, 4, 8, 16, 64 and 128 logical CPUs, continuous system
 monitoring, repeated recording sessions and bounded live history. Linux CI runs on Python
 3.10, 3.12 and 3.13. Individual GPU drivers need real-hardware validation.
 
+The Qt dependency currently uses the tested 6.11 series. A native reference-count
+crash was reproduced with PySide6 6.12 on Python 3.10 when rendering live charts;
+the upper bound should only be raised after checking that combination again.
+
 ### Build the Ubuntu package
 
 Build on Ubuntu 24.04 amd64 with a clean virtual environment:
