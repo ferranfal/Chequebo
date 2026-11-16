@@ -6,7 +6,7 @@ source under the MIT license.
 
 ## Install on Ubuntu
 
-Download `chequebo_0.2.0_amd64.deb` from
+Download `chequebo_0.2.1_amd64.deb` from
 [GitHub Releases](https://github.com/ferranfal/Chequebo/releases/latest).
 The package targets **Ubuntu 24.04 LTS, Intel/AMD 64-bit (amd64)**. It bundles the
 application, Python runtime and Qt interface; APT installs the required system
@@ -15,7 +15,7 @@ libraries. Other Ubuntu versions and ARM packages are not tested yet.
 From the folder containing the downloaded file:
 
 ```bash
-sudo apt install ./chequebo_0.2.0_amd64.deb
+sudo apt install ./chequebo_0.2.1_amd64.deb
 ```
 
 Open **Chequebo** from Ubuntu's applications menu, or run `chequebo` in a
