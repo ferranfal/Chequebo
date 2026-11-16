@@ -6,16 +6,30 @@ source under the MIT license.
 
 ## Install on Ubuntu
 
-Download `chequebo_0.2.1_amd64.deb` from
-[GitHub Releases](https://github.com/ferranfal/Chequebo/releases/latest).
+The installer **`chequebo.deb` is included in the root of this repository**.
+Clone the repository and install it:
+
+```bash
+git clone https://github.com/ferranfal/Chequebo.git
+cd Chequebo
+sudo apt install ./chequebo.deb
+```
+
+If you already cloned it, run `git pull --ff-only` from the project folder first,
+then `sudo apt install ./chequebo.deb`.
+
 The package targets **Ubuntu 24.04 LTS, Intel/AMD 64-bit (amd64)**. It bundles the
 application, Python runtime and Qt interface; APT installs the required system
 libraries. Other Ubuntu versions and ARM packages are not tested yet.
 
-From the folder containing the downloaded file:
+You can also download the versioned installer from
+[GitHub Releases](https://github.com/ferranfal/Chequebo/releases/latest).
+The bundled `.deb` contains the latest published release, which can differ from
+unreleased source changes on `main`. Its checksum is in `chequebo.deb.sha256`.
+To check the bundled file before installation:
 
 ```bash
-sudo apt install ./chequebo_0.2.1_amd64.deb
+sha256sum --check chequebo.deb.sha256
 ```
 
 Open **Chequebo** from Ubuntu's applications menu, or run `chequebo` in a
@@ -179,7 +193,9 @@ The `.deb` is written to `dist/`. The package contains a standalone directory
 under `/opt/chequebo`, a `chequebo` command, an application-menu entry and an icon.
 Building requires internet access to install dependencies; running does not.
 Published GitHub releases trigger a clean Ubuntu build and attach the installer
-and its SHA-256 checksum automatically.
+and its SHA-256 checksum automatically. After a successful release build, the
+**Bundle Ubuntu installer in repository** workflow verifies the release checksum
+and updates `chequebo.deb` on `main`, so a normal clone includes the installer.
 
 Chequebo code: [MIT](LICENSE). Bundled dependencies retain their own licenses,
 included under `/usr/share/doc/chequebo/third-party` in the Ubuntu package. Qt

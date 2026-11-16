@@ -1,0 +1,50 @@
+name: Bundle Ubuntu installer in repository
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [Ubuntu desktop package]
+    types: [completed]
+permissions:
+  contents: write
+concurrency:
+  group: bundle-ubuntu-installer
+  cancel-in-progress: false
+jobs:
+  bundle:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'release')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - name: Download and verify the latest published installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          installer_dir="$(mktemp -d "$RUNNER_TEMP/chequebo-release.XXXXXX")"
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern 'chequebo_*_amd64.deb' --pattern SHA256SUMS --dir "$installer_dir"
+          (
+            cd "$installer_dir"
+            sha256sum --check SHA256SUMS
+          )
+          packages=("$installer_dir"/chequebo_*_amd64.deb)
+          test "${#packages[@]}" = 1
+          package="${packages[0]}"
+          test "$(dpkg-deb --field "$package" Package)" = chequebo
+          test "$(dpkg-deb --field "$package" Architecture)" = amd64
+          # Keep the installer below GitHub's per-file Git limit.
+          test "$(stat -c %s "$package")" -lt 104857600
+          install -m 644 "$package" chequebo.deb
+          sha256sum chequebo.deb > chequebo.deb.sha256
+      - name: Commit the installer on main
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chequebo.deb chequebo.deb.sha256
+          if git diff --cached --quiet; then exit 0; fi
+          version="$(dpkg-deb --field chequebo.deb Version)"
+          git commit -m "Bundle Ubuntu installer $version for installation after clone"
+          git pull --rebase origin main
+          git push origin HEAD:main
