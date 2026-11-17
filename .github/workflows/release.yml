@@ -19,7 +19,7 @@ jobs:
           python-version: '3.12'
       - run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0 libnss3 libasound2t64 desktop-file-utils
       - run: python -m pip install -e '.[nvidia,dev,build]'
-      - run: python -m pytest -q
+      - run: python -m pytest -q -s
       - run: desktop-file-validate packaging/io.github.ferranfal.Chequebo.desktop
       - run: ./packaging/build-deb.sh
       - name: Install and smoke-test the desktop package

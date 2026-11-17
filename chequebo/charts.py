@@ -84,6 +84,9 @@ class PlotlyDashboard(QWebEngineView):
         self.ready = False
         self.flush_timer.stop()
         self.payload = None
+        # The shared profile outlives this view. Stop its download callbacks
+        # before destroying our page, including while the window awaits deletion.
+        self.profile.downloadRequested.disconnect(self.save_download)
         self.stop()
         page = self.page()
         page.setWebChannel(None)
@@ -93,7 +96,7 @@ class PlotlyDashboard(QWebEngineView):
         QCoreApplication.sendPostedEvents(page, QEvent.Type.DeferredDelete)
 
     def save_download(self, download):
-        if download.page() != self.page():
+        if not self.ready or download.page() != self.page():
             return
         path, _ = QFileDialog.getSaveFileName(self, 'Save chart image', 'chequebo-chart.png', 'PNG image (*.png)')
         if not path:
