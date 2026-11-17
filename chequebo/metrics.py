@@ -127,6 +127,19 @@ class GPU:
         return (sum(activity) / len(activity) if activity and valid_activity else None,
                 sum(memory) / MIB if valid_memory else None)
 
+    def total_memory_mib(self):
+        """Capacity across the same devices used for the VRAM measurement."""
+        if self.handles:
+            try:
+                return sum(self.nv.nvmlDeviceGetMemoryInfo(handle).total for handle in self.handles) / MIB
+            except self.nv.NVMLError:
+                return None
+        try:
+            return (sum(int((path.parent / "mem_info_vram_total").read_text()) for path in self.amd) / MIB
+                    if self.amd else None)
+        except (OSError, ValueError):
+            return None
+
     def close(self):
         if self.nv:
             try:
@@ -176,6 +189,7 @@ class SystemSampler:
             "swap_total_mib": swap.total / MIB,
             "read_mib_s": reads, "write_mib_s": writes,
             "gpu_percent": activity, "vram_mib": vram,
+            "vram_total_mib": self.gpu.total_memory_mib(),
             "processes": len(psutil.pids()),
             "gpu_note": self.gpu.note, "notes": [], "alive": True,
         }
@@ -258,6 +272,7 @@ class Sampler:
             "read_mib_s": read_bytes / dt / MIB if valid_io and not first else None,
             "write_mib_s": write_bytes / dt / MIB if valid_io and not first else None,
             "gpu_percent": gpu, "vram_mib": vram,
+            "vram_total_mib": self.gpu.total_memory_mib(),
             "cpu_system": psutil.cpu_percent(percpu=True),
             "processes": len(processes), "threads": threads,
             "pids": observed, "notes": sorted(notes), "gpu_note": self.gpu.note,

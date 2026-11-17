@@ -39,7 +39,7 @@ def metrics_for(metadata):
 
 def display_metric(key, value, unit):
     """Keep recordings/raw CSV in their original units; present memory in GiB."""
-    if key in ("ram_mib", "swap_mib", "memory_mib"):
+    if key in ("ram_mib", "swap_mib", "memory_mib", "vram_mib"):
         return (value / 1024 if value is not None else None), "GiB"
     return value, unit
 

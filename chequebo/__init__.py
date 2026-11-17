@@ -1,3 +1,3 @@
 """Chequebo: a local Linux process monitor."""
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"

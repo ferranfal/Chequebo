@@ -41,3 +41,25 @@ def test_system_vram_uses_device_memory_instead_of_process_lists():
         raise RuntimeError("unavailable")
     gpu.nv.nvmlDeviceGetMemoryInfo = unsupported
     assert gpu.sample() == (37, None)
+
+
+def test_nvidia_capacity_sums_cards_and_preserves_unavailable():
+    gpu = fake_gpu([])
+    gpu.handles = [0, 1]
+    gpu.nv.nvmlDeviceGetMemoryInfo = lambda card: NS(total=(card + 1)*8*1024*MIB)
+    assert gpu.total_memory_mib() == 24*1024
+    def unavailable(_):
+        raise RuntimeError("GPU lost")
+    gpu.nv.nvmlDeviceGetMemoryInfo = unavailable
+    assert gpu.total_memory_mib() is None
+
+
+def test_amd_capacity_reads_driver_totals(tmp_path):
+    gpu = GPU.__new__(GPU)
+    gpu.handles = []
+    gpu.amd = [tmp_path / "gpu_busy_percent"]
+    total = tmp_path / "mem_info_vram_total"
+    total.write_text(str(16*1024*MIB))
+    assert gpu.total_memory_mib() == 16*1024
+    total.unlink()
+    assert gpu.total_memory_mib() is None

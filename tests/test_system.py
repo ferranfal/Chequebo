@@ -12,6 +12,9 @@ from chequebo.ui import Window
 class FakeGPU:
     note = "Test GPU"
 
+    def total_memory_mib(self):
+        return 8192
+
     def sample(self):
         return 42, 1024
 

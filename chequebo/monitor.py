@@ -43,7 +43,8 @@ class SystemMonitor(QThread):
         if self.store is None:
             return
         self.metadata.update(state="error" if error else "stopped", error=error,
-                             ended_at=time.time())
+                             ended_at=time.time(), duration=max(0, time.monotonic() - self.record_started))
+        self.metadata["live_ended_elapsed"] = self.metadata["live_started_elapsed"] + self.metadata["duration"]
         try:
             self.store.set_meta(self.metadata)
         except Exception as exc:
@@ -74,6 +75,7 @@ class SystemMonitor(QThread):
                         "ram_total_mib": psutil.virtual_memory().total / 1024**2,
                         "swap_total_mib": psutil.swap_memory().total / 1024**2,
                         "started_at": started_at, "state": "recording",
+                        "live_started_elapsed": max(0, self.record_started - sampler.started),
                     }
                     try:
                         path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,7 +86,7 @@ class SystemMonitor(QThread):
                     else:
                         self.path, self.metadata = path, metadata
                         self.first_record_sample = True
-                        self.recording_changed.emit(str(path), dict(metadata))
+                        self.recording_changed.emit(str(path), {**metadata, "started_monotonic": self.record_started})
                         next_sample = time.monotonic()
                 elif action == "save":
                     self._finish()

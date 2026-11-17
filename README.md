@@ -70,9 +70,13 @@ Without the NVIDIA extra, CPU, RAM, disk and recording features still work.
    GPU measurements start automatically. There is no program or PID to enter.
 2. The live panel keeps the **last 10 minutes** in memory without writing a
    recording to disk. Change the time range or click a chart to inspect history.
-   Enable **Follow latest** to return the cursor to the newest sample.
+   Selecting a sample or moving the cursor keeps charts scrolling. **Back to
+   live** returns the cursor and time range to incoming data.
 3. Press **Record** to start saving the whole computer from that moment onward.
    Press **Stop recording** to save the session. **Live monitoring continues.**
+   A clock shows recording duration. Green **Record** and amber **Stop** lines
+   mark the most recent recording on every chart. Starting a recording returns
+   to live time automatically; the stopped duration remains visible afterward.
 4. Click **Open last recording** to inspect its complete history and peak table,
    including samples older than the live buffer. **Open recording** opens any
    earlier session. **Back to live** returns to the current computer activity.
@@ -80,6 +84,20 @@ Without the NVIDIA extra, CPU, RAM, disk and recording features still work.
 5. The peak table covers the live buffer or the opened recording, as its heading
    indicates. It also shows peaks within the selected range. Click a peak to
    navigate to its time; export a peak report or samples to CSV.
+
+Each chart has **X+/X−**, **Y+/Y−**, **Fit Y**, **Reset** and **Full screen**
+controls. **Fit Y** shows small variations clearly. Vertical zoom persists while
+new samples arrive. **Reset** restores the default scale and time range.
+Use **Restore** or **Esc** to leave full screen; monitoring and recording continue
+in both views, and the recording clock remains visible in full screen.
+Drag a chart to pan, or use the mouse wheel to zoom. Drag/scroll over the left
+axis for Y only or the bottom axis for X only. All charts share the time range.
+
+An explicit X zoom, pan or custom time range holds that time window; the status
+then says **FIXED TIME RANGE** and still reports the latest arriving sample.
+**Back to live** resumes scrolling. Selecting a point or zooming only Y does not
+disable **Follow live time**. A status message identifies missing new samples
+or a stopped monitor instead of silently presenting a frozen graph as live.
 
 Minimizing keeps monitoring and recording running. Closing the app finishes an
 active recording and stops monitoring. It does not install a background service
@@ -112,7 +130,7 @@ could be eight CPUs partly busy, four fully busy, or another distribution. The
 individual bars show that distribution. Core and logical CPU counts are detected
 automatically, including when a recording was made on a different machine.
 
-The memory chart uses **GiB** and a fixed vertical range from zero to **physical
+By default, the memory chart uses **GiB** and a fixed vertical range from zero to **physical
 RAM + configured swap**. A **red horizontal line** marks the physical RAM limit.
 For example, 64 GiB of RAM and 100 GiB of swap produce a 0–164 GiB axis with the
 line at 64 GiB. The blue curve shows combined usage; the caption separates RAM
@@ -127,6 +145,14 @@ total identified instead of substituting the current computer's capacity.
 Memory peaks in the table and peak report use GiB; raw sample CSV columns ending
 in `_mib` keep their original MiB units. The combined peak is the largest
 simultaneous RAM + swap usage, not the sum of their separate peaks.
+
+VRAM also uses **GiB**, with its default axis fixed from zero to the total memory
+of the detected GPU (summed across the same cards when there are several).
+NVIDIA capacity comes from NVML; AMD capacity comes from the driver when exposed.
+New samples preserve GPU capacity for viewing recordings on other machines.
+If capacity is unavailable, the caption says so and the chart uses the available
+usage data. **Reset** restores the detected capacity after zooming. VRAM peaks
+also use GiB; raw `_mib` CSV columns remain in MiB.
 
 Recordings made with older Chequebo versions still open and keep their original
 program-specific labels: RAM PSS and NVIDIA VRAM attributed to observed processes,
@@ -198,7 +224,8 @@ Tests cover peaks, missing values, persistence, real processes, orphan children,
 stopping recordings, VRAM deduplication, chart navigation, packaged launch behavior
 normalization with 1, 4, 8, 16, 64 and 128 logical CPUs, continuous system
 monitoring, repeated recording sessions, bounded live history, memory units,
-RAM/swap capacity changes and saved memory scales. Linux CI runs on Python
+RAM/swap capacity changes, recorded GPU capacities, recording markers and timers,
+live cursor inspection, mouse zoom and full-screen restoration. Linux CI runs on Python
 3.10, 3.12 and 3.13. Individual GPU drivers need real-hardware validation.
 
 The Qt dependency currently uses the tested 6.11 series. A native reference-count

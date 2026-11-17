@@ -12,6 +12,8 @@ from chequebo import metrics
 
 class NoGPU:
     note = "GPU unavailable"
+    def total_memory_mib(self):
+        return None
     def sample(self, pids):
         return None, None
     def close(self):
@@ -71,4 +73,3 @@ def test_own_session_finds_orphaned_child(tmp_path):
         if parent.poll() is None:
             parent.terminate()
             parent.wait()
-
