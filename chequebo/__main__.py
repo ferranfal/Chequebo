@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import os
 import signal
 import sys
 import time
@@ -15,8 +14,8 @@ from . import __version__
 def main():
     parser = argparse.ArgumentParser(description="Chequebo · Linux system monitor")
     parser.add_argument("--version", action="version", version=__version__)
-    parser.add_argument("--data-dir", type=Path, default=Path(
-        os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "chequebo")
+    parser.add_argument("--data-dir", type=Path,
+                        help="Recording folder for this launch (overrides the saved folder)")
     parser.add_argument("--headless", action="store_true", help="Record without opening a window")
     parser.add_argument("--pid", type=int, help="Process ID to attach to")
     parser.add_argument("--interval", type=float, default=1.0, help="Seconds between samples (minimum 0.2)")
@@ -66,8 +65,9 @@ def record_headless(args, command):
     from PySide6.QtCore import QCoreApplication, QTimer
     from .recorder import Recorder, launch
     from .monitor import SystemMonitor
+    from .preferences import recording_directory
     app = QCoreApplication([sys.argv[0]])
-    args.data_dir.mkdir(parents=True, exist_ok=True)
+    args.data_dir = recording_directory(args.data_dir)
     path = args.output or args.data_dir / (time.strftime("%Y%m%d-%H%M%S-") + uuid4().hex[:6] + ".chequebo")
     if path.exists():
         raise SystemExit("The output file already exists; choose another path to preserve the recording.")

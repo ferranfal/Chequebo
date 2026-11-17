@@ -72,7 +72,10 @@ Without the NVIDIA extra, CPU, RAM, disk and recording features still work.
    recording to disk. Change the time range or click a chart to inspect history.
    Selecting a sample or moving the cursor keeps charts scrolling. **Back to
    live** returns the cursor and time range to incoming data.
-3. Press **Record** to start saving the whole computer from that moment onward.
+3. Use **Choose recording folder…** to select where new recordings are saved.
+   The path is shown beside the button and remembered across launches. Changing
+   it during a recording applies to the next recording; existing files stay put.
+   Press **Record** to start saving the whole computer from that moment onward.
    Press **Stop recording** to save the session. **Live monitoring continues.**
    A clock shows recording duration. Green **Record** and amber **Stop** lines
    mark the most recent recording on every chart. Starting a recording returns
@@ -101,8 +104,8 @@ or a stopped monitor instead of silently presenting a frozen graph as live.
 
 Minimizing keeps monitoring and recording running. Closing the app finishes an
 active recording and stops monitoring. It does not install a background service
-or start automatically at login. Recordings go to `~/.local/share/chequebo`
-(respecting `XDG_DATA_HOME`). Each SQLite sample is committed immediately. Earlier
+or start automatically at login. By default, recordings go to `~/.local/share/chequebo`
+(respecting `XDG_DATA_HOME`), until you choose another folder. Each SQLite sample is committed immediately. Earlier
 committed samples can be recovered after an unexpected shutdown.
 
 Recording saves only the period after pressing Record; the preceding live buffer
@@ -200,7 +203,9 @@ may escape sampling; access restrictions can limit measurements. Commands run
 with standard input closed, and output goes to a `.log` beside the recording.
 For pipes or redirection, explicitly use `bash -lc 'your command'`.
 
-`--data-dir /path` changes the recording folder. Source installations can
+Headless recording also uses the folder selected in the desktop app.
+`--data-dir /path` overrides it for that launch without changing the saved preference;
+`--output /path/file.chequebo` chooses an exact headless output file. Source installations can
 substitute `./run.sh` for `chequebo`.
 
 ## Development and tests

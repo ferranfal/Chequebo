@@ -2,6 +2,7 @@
 
 import bisect
 import math
+import tempfile
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -9,7 +10,7 @@ from uuid import uuid4
 import numpy as np
 import psutil
 import pyqtgraph as pg
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSettings
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog,
     QDoubleSpinBox, QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from .metrics import GPU
 from .monitor import SystemMonitor
+from .preferences import recording_directory, recording_settings
 from .session import clock, display_metric, export_maxima, export_samples, load_session, maximum, metrics_for, metric_value
 
 
@@ -34,10 +36,10 @@ class MemoryAxis(pg.AxisItem):
 
 
 class Window(QMainWindow):
-    def __init__(self, data_dir, auto_start=True):
+    def __init__(self, data_dir=None, auto_start=True, settings=None):
         super().__init__()
-        self.data_dir = Path(data_dir)
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.settings = settings if settings is not None else recording_settings()
+        self.data_dir = recording_directory(data_dir, self.settings)
         self.live_samples = []
         self.live_metadata = {"scope": "system", "cpu_count": psutil.cpu_count() or 1,
                               "physical_cores": psutil.cpu_count(logical=False),
@@ -151,6 +153,15 @@ class Window(QMainWindow):
         self.record_clock = QLabel("Not recording · 00:00:00")
         self.record_clock.setStyleSheet("font-size:18px; font-weight:bold; color:#65df9b;")
         grid.addWidget(self.record_clock, 4, 0, 1, 3)
+        self.folder_button = QPushButton("Choose recording folder…")
+        self.folder_button.clicked.connect(self.choose_recording_folder)
+        self.folder_label = QLabel(str(self.data_dir))
+        self.folder_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.folder_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.folder_label.setWordWrap(True)
+        self.folder_label.setToolTip("Folder for new recordings. An active recording keeps its current path.")
+        grid.addWidget(self.folder_button, 5, 0)
+        grid.addWidget(self.folder_label, 5, 1, 1, 2)
         self.layout.addWidget(group)
 
     def _build_time_controls(self):
@@ -423,6 +434,27 @@ class Window(QMainWindow):
             plot.getAxis("left").setTicks(None)
             peak = maximum(self.samples, "memory_mib")
             plot.setYRange(0, max(ram or 1, peak["memory_mib"] / 1024 * 1.1 if peak else 1), padding=0)
+
+    def choose_recording_folder(self):
+        selected = QFileDialog.getExistingDirectory(self, "Choose recording folder", str(self.data_dir))
+        if not selected:
+            return
+        try:
+            folder = Path(selected).expanduser().resolve()
+            with tempfile.TemporaryFile(dir=folder, prefix=".chequebo-write-") as probe:
+                probe.write(b"Chequebo")
+                probe.flush()
+        except OSError as exc:
+            QMessageBox.warning(self, "Cannot use recording folder",
+                                f"Choose a folder you can write to.\n\n{exc}")
+            return
+        self.data_dir = folder
+        self.folder_label.setText(str(folder))
+        self.settings.setValue("recording_folder", str(folder))
+        self.settings.sync()
+        if self.settings.status() != QSettings.Status.NoError:
+            QMessageBox.warning(self, "Cannot remember recording folder",
+                                "This folder will be used for this session, but the preference could not be saved.")
 
     def new_path(self):
         return self.data_dir / (time.strftime("%Y%m%d-%H%M%S-") + uuid4().hex[:6] + ".chequebo")
