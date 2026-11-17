@@ -30,6 +30,8 @@ SYSTEM_METRICS = (
     ("vram_mib", "VRAM · whole system", "MiB"),
     ("processes", "System processes", ""),
     ("memory_mib", "System RAM + swap", "MiB"),
+    ("net_recv_mbps", "Network download", "Mb/s"),
+    ("net_sent_mbps", "Network upload", "Mb/s"),
 )
 
 

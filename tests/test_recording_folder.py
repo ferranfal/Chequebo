@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QSettings
+from PyQt6.QtCore import QSettings
 
 from chequebo.preferences import recording_directory
 from chequebo.session import load_session

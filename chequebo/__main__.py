@@ -44,9 +44,9 @@ def main():
         return record_headless(args, command)
     if args.pid or command:
         parser.error("For optional per-process recording, add --headless. The desktop monitors the whole computer.")
-    from PySide6.QtCore import QLocale
-    from PySide6.QtGui import QIcon
-    from PySide6.QtWidgets import QApplication
+    from PyQt6.QtCore import QLocale
+    from PyQt6.QtGui import QIcon
+    from PyQt6.QtWidgets import QApplication
     from .ui import Window
     app = QApplication([sys.argv[0]])
     QLocale.setDefault(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
@@ -62,7 +62,7 @@ def main():
 
 def record_headless(args, command):
     import shlex
-    from PySide6.QtCore import QCoreApplication, QTimer
+    from PyQt6.QtCore import QCoreApplication, QTimer
     from .recorder import Recorder, launch
     from .monitor import SystemMonitor
     from .preferences import recording_directory

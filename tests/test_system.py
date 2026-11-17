@@ -31,7 +31,7 @@ class FakeSampler:
         return dict(elapsed=time.monotonic() - self.started, timestamp=time.time(),
                     ram_mib=128, cpu_percent=50, cpu_equivalent=4, cpu_system=[50] * 8,
                     read_mib_s=2, write_mib_s=3, swap_mib=0, gpu_percent=42,
-                    vram_mib=1024, processes=120, gpu_note="Test GPU")
+                    vram_mib=1024, processes=120, gpu_note="Test GPU", net_recv_mbps=8, net_sent_mbps=2)
 
     def close(self):
         pass
@@ -150,7 +150,7 @@ def test_gui_starts_live_and_separates_saved_view_from_bounded_history(tmp_path,
     try:
         until(lambda: len(window.samples) >= 2, app)
         assert not list(tmp_path.glob("*.chequebo"))
-        assert window.chart_groups["memory_mib"].title() == "System memory · RAM + swap"
+        assert window.chart_specs["memory_mib"][0] == "System memory · RAM + swap"
         window.start_recording()
         until(lambda: window.recording, app)
         until(lambda: len(window.samples) >= 4, app)
@@ -177,7 +177,7 @@ def test_gui_starts_live_and_separates_saved_view_from_bounded_history(tmp_path,
         writer.append(FakeSampler().sample())
         writer.close()
         window.load_recording(old)
-        assert "PSS" in window.chart_groups["memory_mib"].title()
+        assert "PSS" in window.chart_specs["memory_mib"][0]
         assert "Program VRAM" in window.table.item(6, 0).text()
     finally:
         window.close()

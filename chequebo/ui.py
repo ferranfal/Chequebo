@@ -7,37 +7,26 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
-import numpy as np
 import psutil
-import pyqtgraph as pg
-from PySide6.QtCore import Qt, QTimer, QSettings
-from PySide6.QtWidgets import (
+from PyQt6.QtCore import Qt, QTimer, QSettings
+from PyQt6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog,
     QDoubleSpinBox, QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
     QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-    QScrollArea, QSlider, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
+    QScrollArea, QSlider, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from .charts import PlotlyDashboard
 from .metrics import GPU
 from .monitor import SystemMonitor
 from .preferences import recording_directory, recording_settings
 from .session import clock, display_metric, export_maxima, export_samples, load_session, maximum, metrics_for, metric_value
 
 
-class TimeAxis(pg.AxisItem):
-    def tickStrings(self, values, scale, spacing):
-        return [clock(value) + (f".{int(value * 10) % 10}" if spacing < 1 else "") for value in values]
-
-
-class MemoryAxis(pg.AxisItem):
-    def boundingRect(self):
-        # Keep zero and the exact capacity visible at the edges, including with a grid.
-        return super().boundingRect().adjusted(0, -15, 0, 15)
-
-
 class Window(QMainWindow):
     def __init__(self, data_dir=None, auto_start=True, settings=None):
         super().__init__()
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.settings = settings if settings is not None else recording_settings()
         self.data_dir = recording_directory(data_dir, self.settings)
         self.live_samples = []
@@ -53,22 +42,23 @@ class Window(QMainWindow):
         self.viewing_live = True
         self.recording = False
         self.cursor_follows = True
-        self.manual_y = set()
+        self.manual_y = {}
+        self.live_window_seconds = None
+        self.chart_epoch = 0
+        self.chart_ranges = {}
+        self.chart_values = {}
+        self.chart_markers = [None, None]
         self.recording_span = {}
         self.record_started_monotonic = None
         self.last_sample_monotonic = None
         self.monitor_error = ""
         self.fullscreen_dialog = None
-        self.chart_buttons, self.record_lines = {}, {}
         self.closing = False
         self.last_recording = None
         self.session_path = None
-        self.plots, self.curves, self.lines, self.value_labels = {}, {}, {}, {}
-        self.chart_groups = {}
         self.core_bars = []
         self.setWindowTitle("Chequebo · Live system monitor")
         self.resize(1220, 920)
-        pg.setConfigOptions(antialias=True, background="#151a22", foreground="#dce5f1")
         self.setStyleSheet("""
           QMainWindow, QDialog, QWidget { background:#161b23; color:#e8eef7; }
           QGroupBox { border:1px solid #394352; border-radius:7px; margin-top:10px; padding-top:12px; }
@@ -84,7 +74,7 @@ class Window(QMainWindow):
           QScrollArea { border:0; }
           QToolTip { background:#283343; color:#ffffff; border:1px solid #475569; }
         """)
-        scroll = QScrollArea()
+        scroll = self.scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         content = QWidget()
         self.layout = QVBoxLayout(content)
@@ -100,6 +90,7 @@ class Window(QMainWindow):
         self.layout.addWidget(self.status)
         self._core_layout(psutil.cpu_count() or 1)
         self.set_scope()
+        self.refresh()
         self.clock_timer = QTimer(self)
         self.clock_timer.timeout.connect(self.update_activity)
         self.clock_timer.start(250)
@@ -167,23 +158,30 @@ class Window(QMainWindow):
     def _build_time_controls(self):
         group = QGroupBox("Chart time range")
         row = QHBoxLayout(group)
-        self.follow = QCheckBox("Follow live time")
+        self.follow = QCheckBox("Follow latest")
         self.follow.setChecked(True)
+        self.follow.setEnabled(False)
+        self.follow.setToolTip("Live charts always advance. Zoom changes the visible duration.")
         self.range_mode = QComboBox()
-        for label, seconds in [("All available history", 0), ("Last 2 minutes", 120), ("Last 5 minutes", 300)]:
+        for label, seconds in [("All available history", 0), ("Last 2 minutes", 120), ("Last 5 minutes", 300), ("Custom window", -1)]:
             self.range_mode.addItem(label, seconds)
-        self.range_mode.addItem("Custom range", -1)
+        self.window_seconds = QDoubleSpinBox()
+        self.window_seconds.setRange(.2, 600)
+        self.window_seconds.setValue(60)
+        self.window_seconds.setEnabled(False)
+        self.window_seconds.setSuffix(" s window")
+        self.window_seconds.setToolTip("Visible duration; the newest sample stays at the right edge")
         self.start_time, self.end_time = QDoubleSpinBox(), QDoubleSpinBox()
-        for spin in [self.start_time, self.end_time]:
+        for spin in (self.start_time, self.end_time):
             spin.setRange(0, 100000000)
-            spin.setDecimals(1)
+            spin.setDecimals(3)
             spin.setSuffix(" s")
-        self.start_time.setToolTip("Seconds since monitoring started (or since the opened recording started)")
-        self.end_time.setToolTip("Seconds since monitoring started (or since the opened recording started)")
-        for widget in [self.follow, self.range_mode, QLabel("From"), self.start_time, QLabel("To"), self.end_time]:
+            spin.setReadOnly(True)
+        for widget in [self.follow, self.range_mode, self.window_seconds, QLabel("From"), self.start_time, QLabel("To"), self.end_time]:
             row.addWidget(widget)
         self.follow.toggled.connect(self.follow_changed)
         self.range_mode.currentIndexChanged.connect(self.preset_changed)
+        self.window_seconds.valueChanged.connect(self.window_changed)
         self.start_time.valueChanged.connect(self.manual_range)
         self.end_time.valueChanged.connect(self.manual_range)
         self.layout.addWidget(group)
@@ -192,94 +190,19 @@ class Window(QMainWindow):
         self.layout.addWidget(self.view_status)
 
     def _build_charts(self):
-        grid = self.chart_grid = QGridLayout()
-        self.layout.addLayout(grid)
-        chart_specs = [
-            ("memory_mib", "System memory · RAM + swap", "GiB"),
-            ("cpu_percent", "Program CPU · 100% = all logical CPUs", "%"),
-            ("gpu_percent", "GPU · whole system (average across cards)", "%"),
-            ("vram_mib", "Program + children VRAM · NVIDIA", "GiB"),
-            ("read_mib_s", "Program disk I/O · read / write", "MiB/s"),
-        ]
-        for index, (key, title, unit) in enumerate(chart_specs):
-            group = QGroupBox(title)
-            self.chart_groups[key] = group
-            box = QVBoxLayout(group)
-            toolbar = QHBoxLayout()
-            toolbar.setSpacing(4)
-            self.chart_buttons[key] = {}
-            for action, text, tip, callback in [
-                ("x_in", "X+", "Zoom in horizontally", lambda _, k=key: self.zoom_chart(k, 0, 0.5)),
-                ("x_out", "X−", "Zoom out horizontally", lambda _, k=key: self.zoom_chart(k, 0, 2)),
-                ("y_in", "Y+", "Zoom in vertically around the selected value", lambda _, k=key: self.zoom_chart(k, 1, 0.5)),
-                ("y_out", "Y−", "Zoom out vertically", lambda _, k=key: self.zoom_chart(k, 1, 2)),
-                ("fit_y", "Fit Y", "Fit the vertical scale to visible data", lambda _, k=key: self.fit_y(k)),
-                ("reset", "Reset", "Restore time range and default scale", lambda _, k=key: self.reset_chart(k)),
-                ("fullscreen", "⛶ Full screen", "Expand this chart; Esc restores the dashboard", lambda _, k=key: self.toggle_fullscreen(k)),
-            ]:
-                button = QToolButton()
-                button.setText(text)
-                button.setToolTip(tip)
-                button.setAccessibleName(tip)
-                button.clicked.connect(callback)
-                self.chart_buttons[key][action] = button
-                toolbar.addWidget(button)
-            toolbar.addStretch()
-            box.addLayout(toolbar)
-            label = QLabel("No samples")
-            label.setWordWrap(True)
-            self.value_labels[key] = label
-            box.addWidget(label)
-            axes = {"bottom": TimeAxis(orientation="bottom")}
-            if key in ("memory_mib", "vram_mib"):
-                axes["left"] = MemoryAxis(orientation="left")
-            plot = pg.PlotWidget(axisItems=axes)
-            if key in ("memory_mib", "vram_mib"):
-                plot.plotItem.layout.setContentsMargins(1, 12, 1, 1)
-            plot.setFixedHeight(180)
-            plot.setLabel("left", unit)
-            plot.getAxis("left").enableAutoSIPrefix(False)
-            plot.setLabel("bottom", "Elapsed time")
-            plot.showGrid(x=True, y=True, alpha=0.15)
-            plot.setMouseEnabled(x=True, y=True)
-            plot.setMenuEnabled(False)
-            plot.hideButtons()
-            plot.disableAutoRange()
-            plot.setToolTip("Drag to pan; wheel to zoom. Use the left axis for Y only or the bottom axis for X only.")
-            if key in ("cpu_percent", "gpu_percent"):
-                plot.setYRange(0, 100, padding=0.03)
-            self.plots[key] = plot
-            plot.getViewBox().sigRangeChangedManually.connect(lambda axes, k=key: self.chart_range_changed(k, axes))
-            self.curves[key] = plot.plot(pen=pg.mkPen("#79b8ff", width=2), connect="finite")
-            self.curves[key].setDownsampling(auto=True, method="peak")
-            self.curves[key].setClipToView(True)
-            line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#9aaec6"))
-            plot.addItem(line)
-            self.lines[key] = line
-            boundaries = []
-            for title, color, position in [("Record", "#65df9b", 0.9), ("Stop", "#f4b45e", 0.75)]:
-                boundary = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(color, width=2),
-                                           label=title, labelOpts={"position": position, "color": color})
-                boundary.setZValue(20)
-                boundary.hide()
-                plot.addItem(boundary)
-                boundaries.append(boundary)
-            self.record_lines[key] = boundaries
-            if key == "memory_mib":
-                self.ram_limit = pg.InfiniteLine(
-                    angle=0, movable=False, pen=pg.mkPen("#ff6b6b", width=2),
-                    label="Physical RAM: {value:.2f} GiB",
-                    labelOpts={"position": 0.98, "color": "#ff6b6b", "anchors": [(1, 0), (1, 1)]},
-                )
-                self.ram_limit.setZValue(10)
-                plot.addItem(self.ram_limit)
-            if key == "read_mib_s":
-                self.curves["write_mib_s"] = plot.plot(pen=pg.mkPen("#e4b76d", width=2), connect="finite")
-                self.curves["write_mib_s"].setDownsampling(auto=True, method="peak")
-                self.curves["write_mib_s"].setClipToView(True)
-            plot.scene().sigMouseClicked.connect(lambda event, p=plot: self.chart_clicked(p, event))
-            box.addWidget(plot)
-            grid.addWidget(group, index // 2, index % 2)
+        self.chart_specs = {
+            "memory_mib": ("System memory · RAM + swap", "GiB", [("memory_mib", "RAM + swap")]),
+            "cpu_percent": ("System CPU · 100% = all logical CPUs", "%", [("cpu_percent", "CPU")]),
+            "gpu_percent": ("GPU · whole system", "%", [("gpu_percent", "GPU")]),
+            "vram_mib": ("VRAM · whole system", "GiB", [("vram_mib", "VRAM")]),
+            "read_mib_s": ("Disk I/O · read / write", "MiB/s", [("read_mib_s", "Read"), ("write_mib_s", "Write")]),
+            "net_recv_mbps": ("Network · download / upload", "Mb/s", [("net_recv_mbps", "Download"), ("net_sent_mbps", "Upload")]),
+        }
+        self.dashboard = PlotlyDashboard(self)
+        self.dashboard.setFixedHeight(1078)
+        self.dashboard.event_received.connect(self.chart_event)
+        self.layout.addWidget(self.dashboard)
+        self.dashboard_index = self.layout.indexOf(self.dashboard)
         self.cores_group = QGroupBox("Each logical CPU · whole system · selected time")
         cores_box = QVBoxLayout(self.cores_group)
         area = QScrollArea()
@@ -293,7 +216,7 @@ class Window(QMainWindow):
         self.core_time = QLabel("Select a time to inspect logical CPU activity.")
         self.core_time.setWordWrap(True)
         cores_box.addWidget(self.core_time)
-        grid.addWidget(self.cores_group, 2, 1)
+        self.layout.addWidget(self.cores_group)
         cursor_row = QHBoxLayout()
         self.cursor = QSlider(Qt.Orientation.Horizontal)
         self.cursor.setRange(0, 0)
@@ -302,6 +225,39 @@ class Window(QMainWindow):
         cursor_row.addWidget(self.cursor_label)
         cursor_row.addWidget(self.cursor, 1)
         self.layout.addLayout(cursor_row)
+
+    def chart_event(self, event):
+        if self.closing:
+            return
+        kind, key = event.get("type"), event.get("key")
+        if kind == "scroll":
+            bar = self.scroll.verticalScrollBar()
+            bar.setValue(bar.value() + round(event.get("dy", 0)))
+        elif kind == "select":
+            self.select_time(event["elapsed"])
+        elif kind == "fullscreen":
+            self.toggle_fullscreen(key)
+        elif kind == "restore":
+            if self.fullscreen_dialog:
+                self.fullscreen_dialog.close()
+        elif key in self.chart_specs and kind == "range":
+            for axis in ('x', 'y'):
+                values = event.get(axis)
+                if values is not None and (len(values) != 2 or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in values) or values[1] <= values[0]):
+                    return
+            if event.get("y"):
+                self.manual_y[key] = event["y"]
+            if event.get("x"):
+                self.set_chart_time_range(*event["x"])
+            else:
+                self.refresh()
+        elif key in self.chart_specs and kind == "action":
+            action = event.get("action")
+            if action in ("x_in", "x_out", "y_in", "y_out"):
+                self.zoom_chart(key, 0 if action[0] == 'x' else 1, .5 if action.endswith('in') else 2)
+            elif action == "fit_y": self.fit_y(key)
+            elif action == "reset": self.reset_chart(key)
+            elif action == "fullscreen": self.toggle_fullscreen(key)
 
     def _build_maxima(self):
         group = self.peaks_group = QGroupBox("Live buffer peaks · last 10 minutes")
@@ -361,14 +317,17 @@ class Window(QMainWindow):
             "read_mib_s": "System disk I/O · read / write" if system else "Program disk I/O · read / write",
         }
         for key, title in titles.items():
-            self.chart_groups[key].setTitle(title)
+            _, unit, series = self.chart_specs[key]
+            self.chart_specs[key] = (title, unit, series)
         self.peaks_group.setTitle("Live buffer peaks · last 10 minutes" if self.viewing_live else "Recording peaks · whole system" if system else "Recording peaks · program + children (GPU activity is global)")
         self.table.setRowCount(len(self.metrics))
         self.table.setHorizontalHeaderLabels(["Resource", "Buffer peak" if self.viewing_live else "Recording peak", "Time", "Range peak", "Time"])
         for row, (_, title, _) in enumerate(self.metrics):
             for col in range(5):
                 self.table.setItem(row, col, QTableWidgetItem(title if col == 0 else "—"))
-        self.set_memory_range()
+        self.follow.setEnabled(not self.viewing_live)
+        for spin in (self.start_time, self.end_time):
+            spin.setReadOnly(self.viewing_live)
 
     def ram_capacity_gib(self):
         def valid(value):
@@ -396,44 +355,6 @@ class Window(QMainWindow):
         valid = [value for value in values
                  if isinstance(value, (int, float)) and math.isfinite(value) and value > 0]
         return max(valid) / 1024 if valid else None
-
-    @staticmethod
-    def set_capacity_axis(plot, capacity):
-        plot.setYRange(0, capacity, padding=0)
-        step = 2 ** math.ceil(math.log2(capacity / 4))
-        ticks = [index * step for index in range(math.ceil(capacity / step))
-                 if index * step < capacity - step * 0.35] + [capacity]
-        plot.getAxis("left").setTicks([[(value, f"{value:.2f}".rstrip("0").rstrip(".")) for value in ticks]])
-
-    def set_vram_range(self):
-        plot = self.plots["vram_mib"]
-        capacity = self.vram_capacity_gib()
-        if "vram_mib" in self.manual_y:
-            plot.getAxis("left").setTicks(None)
-        elif capacity is not None:
-            self.set_capacity_axis(plot, capacity)
-        else:
-            plot.getAxis("left").setTicks(None)
-            peak = maximum(self.samples, "vram_mib")
-            plot.setYRange(0, max(1, peak["vram_mib"] / 1024 * 1.1 if peak else 1), padding=0)
-
-    def set_memory_range(self):
-        plot = self.plots["memory_mib"]
-        ram, swap = self.ram_capacity_gib(), self.swap_capacity_gib()
-        capacity = ram + swap if ram is not None and swap is not None else None
-        self.ram_limit.setVisible(ram is not None)
-        if ram is not None:
-            self.ram_limit.setValue(ram)
-        if "memory_mib" in self.manual_y:
-            plot.getAxis("left").setTicks(None)
-            return
-        if capacity is not None:
-            self.set_capacity_axis(plot, capacity)
-        else:
-            # Never substitute this computer's capacity for a legacy recording.
-            plot.getAxis("left").setTicks(None)
-            peak = maximum(self.samples, "memory_mib")
-            plot.setYRange(0, max(ram or 1, peak["memory_mib"] / 1024 * 1.1 if peak else 1), padding=0)
 
     def choose_recording_folder(self):
         selected = QFileDialog.getExistingDirectory(self, "Choose recording folder", str(self.data_dir))
@@ -493,6 +414,7 @@ class Window(QMainWindow):
             self.record_status.setText(f"LIVE · Recording saved: {path} · Open last recording for its complete history and peaks.")
         self.update_record_markers()
         self.update_activity()
+        self.render_charts()
 
     def monitor_failed(self, error):
         self.monitor_error = error
@@ -522,6 +444,10 @@ class Window(QMainWindow):
             self.status.setText(f"Live · {sample['processes']} system processes · {sample['gpu_note']}")
 
     def show_live(self):
+        if not self.viewing_live:
+            self.manual_y.clear()
+            self.chart_epoch += 1
+        self.live_window_seconds = None
         self.cursor_follows = True
         self.viewing_live = True
         self.samples, self.metadata = self.live_samples, self.live_metadata
@@ -535,31 +461,40 @@ class Window(QMainWindow):
         self.status.setText("Live monitoring · last 10 minutes. Recordings contain all samples saved between Record and Stop.")
 
     def preset_changed(self):
-        if self.range_mode.currentData() == -1:
-            self.follow.setChecked(False)
-        else:
-            self.follow.setChecked(True)
+        seconds = self.range_mode.currentData()
+        self.live_window_seconds = self.window_seconds.value() if seconds == -1 else (seconds or None)
+        self.window_seconds.setEnabled(seconds == -1)
+        self.follow.blockSignals(True)
+        self.follow.setChecked(True)
+        self.follow.blockSignals(False)
         self.refresh()
 
+    def window_changed(self):
+        if self.range_mode.currentData() == -1:
+            self.live_window_seconds = self.window_seconds.value()
+            self.refresh()
+
     def follow_changed(self, checked):
-        if checked:
-            self.cursor_follows = True
-            if self.range_mode.currentData() == -1:
-                self.range_mode.blockSignals(True)
-                self.range_mode.setCurrentIndex(0)
-                self.range_mode.blockSignals(False)
+        if self.viewing_live and not checked:
+            self.follow.setChecked(True)
+            return
         self.refresh()
 
     def manual_range(self):
+        if self.viewing_live:
+            return
         self.follow.blockSignals(True)
         self.follow.setChecked(False)
         self.follow.blockSignals(False)
-        self.range_mode.blockSignals(True)
-        self.range_mode.setCurrentIndex(3)
-        self.range_mode.blockSignals(False)
         self.refresh()
 
     def bounds(self):
+        if self.viewing_live and self.samples:
+            end = self.samples[-1]["elapsed"]
+            start = self.samples[0]["elapsed"]
+            if self.live_window_seconds is not None:
+                start = max(start, end - self.live_window_seconds)
+            return (min(start, end - .001), end)
         return sorted((self.start_time.value(), self.end_time.value()))
 
     def update_activity(self):
@@ -579,12 +514,12 @@ class Window(QMainWindow):
                         else f"Receiving data · latest {clock(self.live_samples[-1]['elapsed'])}")
         if not self.viewing_live:
             view = "SAVED RECORDING · live monitoring continues in the background"
-        elif self.follow.isChecked():
-            view = "LIVE · charts follow incoming data"
+        elif self.viewing_live:
+            view = "LIVE · newest sample stays on the right, at every zoom level"
             if not self.cursor_follows:
                 view += " · inspecting a selected sample"
         else:
-            view = "FIXED TIME RANGE · monitoring and recording continue · click Back to live to resume scrolling"
+            view = "SAVED RECORDING · selected time range"
         self.view_status.setText(f"{view} · {activity}")
         self.live_button.setEnabled(not self.viewing_live or not self.follow.isChecked() or not self.cursor_follows)
         if self.fullscreen_dialog:
@@ -593,82 +528,79 @@ class Window(QMainWindow):
     def update_record_markers(self):
         span = self.recording_span if self.viewing_live else self.metadata
         start = span.get("live_started_elapsed") if self.viewing_live else (0 if span else None)
-        if self.viewing_live:
-            stop = span.get("live_ended_elapsed")
-        else:
-            stop = span.get("duration")
-            if stop is None and span.get("ended_at") is not None and span.get("started_at") is not None:
-                stop = max(0, span["ended_at"] - span["started_at"])
-        for boundaries in self.record_lines.values():
-            for line, value in zip(boundaries, (start, stop)):
-                line.setVisible(value is not None)
-                if value is not None:
-                    line.setValue(value)
+        stop = span.get("live_ended_elapsed") if self.viewing_live else span.get("duration")
+        if not self.viewing_live and stop is None and span.get("ended_at") is not None and span.get("started_at") is not None:
+            stop = max(0, span["ended_at"] - span["started_at"])
+        self.chart_markers = [start, stop]
 
     def set_chart_time_range(self, start, end):
-        start = max(0, start)
-        end = max(start + 0.2, end)
-        self.follow.blockSignals(True)
-        self.follow.setChecked(False)
-        self.follow.blockSignals(False)
-        self.cursor_follows = False
-        self.range_mode.blockSignals(True)
-        self.range_mode.setCurrentIndex(3)
-        self.range_mode.blockSignals(False)
-        for spin, value in [(self.start_time, start), (self.end_time, end)]:
-            spin.blockSignals(True)
-            spin.setValue(value)
-            spin.blockSignals(False)
+        if self.viewing_live:
+            self.live_window_seconds = min(600, max(.2, end - start))
+            self.range_mode.blockSignals(True)
+            self.range_mode.setCurrentIndex(3)
+            self.range_mode.blockSignals(False)
+            self.window_seconds.blockSignals(True)
+            self.window_seconds.setValue(self.live_window_seconds)
+            self.window_seconds.blockSignals(False)
+            self.window_seconds.setEnabled(True)
+        else:
+            self.follow.blockSignals(True)
+            self.follow.setChecked(False)
+            self.follow.blockSignals(False)
+            for spin, value in [(self.start_time, max(0, start)), (self.end_time, max(.2, end))]:
+                spin.blockSignals(True)
+                spin.setValue(value)
+                spin.blockSignals(False)
         self.refresh()
 
-    def chart_range_changed(self, key, axes):
-        if axes[1]:
-            self.manual_y.add(key)
-            if key in ("memory_mib", "vram_mib"):
-                self.plots[key].getAxis("left").setTicks(None)
-        if axes[0]:
-            self.set_chart_time_range(*self.plots[key].viewRange()[0])
+    def chart_points(self, key, selected):
+        keys = [item[0] for item in self.chart_specs[key][2]]
+        # Keep all points in ordinary live use. Long recordings preserve local extrema.
+        if len(selected) > 1800:
+            stride = math.ceil(len(selected) / 400)
+            indices = {0, len(selected) - 1}
+            for offset in range(0, len(selected), stride):
+                indices.add(offset)
+                for metric in keys:
+                    valid = [(i, metric_value(selected[i], metric)) for i in range(offset, min(offset + stride, len(selected)))]
+                    valid = [(i, v) for i, v in valid if isinstance(v, (int, float)) and math.isfinite(v)]
+                    if valid:
+                        indices.add(min(valid, key=lambda pair: pair[1])[0])
+                        indices.add(max(valid, key=lambda pair: pair[1])[0])
+            selected = [selected[i] for i in sorted(indices)]
+        def value(sample, metric):
+            number = metric_value(sample, metric)
+            if not isinstance(number, (int, float)) or not math.isfinite(number): return None
+            return number / 1024 if key in ("memory_mib", "vram_mib") else number
+        return [sample["elapsed"] for sample in selected], [{"name": name, "y": [value(sample, metric) for sample in selected]} for metric, name in self.chart_specs[key][2]]
 
     def zoom_chart(self, key, axis, factor):
-        plot = self.plots[key]
-        low, high = plot.viewRange()[axis]
-        center = (low + high) / 2
-        if self.samples:
-            sample = self.samples[min(self.cursor.value(), len(self.samples) - 1)]
-            value = sample["elapsed"] if axis == 0 else metric_value(sample, key)
-            if value is not None:
-                if axis == 1 and key in ("memory_mib", "vram_mib"):
-                    value /= 1024
-                if low <= value <= high:
-                    center = value
-        width = max(0.2 if axis == 0 else 0.001, (high - low) * factor)
-        start = max(0, center - width / 2)
+        low, high = self.chart_ranges[key][axis]
+        width = max(.2 if axis == 0 else .001, (high - low) * factor)
         if axis == 0:
-            self.set_chart_time_range(start, start + width)
+            end = self.bounds()[1]
+            self.set_chart_time_range(end - width, end)
         else:
-            self.manual_y.add(key)
-            plot.setYRange(start, start + width, padding=0)
-            if key in ("memory_mib", "vram_mib"):
-                plot.getAxis("left").setTicks(None)
+            center = (low + high) / 2
+            low = max(0, center - width / 2)
+            self.manual_y[key] = [low, low + width]
+            self.refresh()
 
     def fit_y(self, key):
         start, end = self.bounds()
-        keys = (key, "write_mib_s") if key == "read_mib_s" else (key,)
-        values = [metric_value(sample, metric) for sample in self.samples
-                  if start - 0.05 <= sample["elapsed"] <= end + 0.05 for metric in keys]
-        values = [value / 1024 if key in ("memory_mib", "vram_mib") else value for value in values
-                  if isinstance(value, (int, float)) and math.isfinite(value)]
-        if not values:
-            return
-        margin = max(0.05, (max(values) - min(values)) * 0.1, max(values) * 0.02)
-        self.manual_y.add(key)
-        self.plots[key].setYRange(max(0, min(values) - margin), max(values) + margin, padding=0)
-        if key in ("memory_mib", "vram_mib"):
-            self.plots[key].getAxis("left").setTicks(None)
+        selected = [sample for sample in self.samples if start <= sample['elapsed'] <= end]
+        _, series = self.chart_points(key, selected)
+        values = [v for trace in series for v in trace['y'] if v is not None]
+        if values:
+            margin = max(.05, (max(values) - min(values)) * .1, max(values) * .02)
+            self.manual_y[key] = [max(0, min(values) - margin), max(values) + margin]
+            self.refresh()
 
     def reset_chart(self, key):
-        self.manual_y.discard(key)
+        self.manual_y.pop(key, None)
+        self.chart_epoch += 1
         self.cursor_follows = True
+        self.live_window_seconds = None
         self.range_mode.setCurrentIndex(0)
         self.follow.setChecked(True)
         self.refresh()
@@ -677,104 +609,96 @@ class Window(QMainWindow):
         if self.fullscreen_dialog:
             self.fullscreen_dialog.close()
             return
-        group, plot = self.chart_groups[key], self.plots[key]
+        if key not in self.chart_specs:
+            return
         dialog = QDialog(self)
-        dialog.setWindowTitle(group.title() + " · Chequebo")
+        dialog.setWindowTitle(self.chart_specs[key][0] + " · Chequebo")
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         layout = QVBoxLayout(dialog)
         self.fullscreen_status = QLabel()
         self.fullscreen_status.setWordWrap(True)
         layout.addWidget(self.fullscreen_status)
-        live = QPushButton("Back to live")
-        live.clicked.connect(self.show_live)
-        layout.addWidget(live)
-        self.chart_grid.removeWidget(group)
-        layout.addWidget(group, 1)
-        plot.setMinimumHeight(180)
-        plot.setMaximumHeight(16777215)
-        self.chart_buttons[key]["fullscreen"].setText("↙ Restore")
+        restore = QPushButton("Restore dashboard (Esc)")
+        restore.clicked.connect(dialog.close)
+        layout.addWidget(restore)
+        self.layout.removeWidget(self.dashboard)
+        layout.addWidget(self.dashboard, 1)
+        self.dashboard.setMinimumHeight(200)
+        self.dashboard.setMaximumHeight(16777215)
         self.fullscreen_dialog = dialog
         dialog.finished.connect(lambda _: self.restore_chart(key, dialog))
+        self.dashboard.fullscreen(key)
         self.update_activity()
         dialog.showFullScreen()
 
     def restore_chart(self, key, dialog):
-        group = self.chart_groups[key]
-        dialog.layout().removeWidget(group)
-        index = list(self.chart_groups).index(key)
-        self.chart_grid.addWidget(group, index // 2, index % 2)
-        self.plots[key].setFixedHeight(180)
-        self.chart_buttons[key]["fullscreen"].setText("⛶ Full screen")
-        group.show()
+        dialog.layout().removeWidget(self.dashboard)
+        self.layout.insertWidget(self.dashboard_index, self.dashboard)
+        self.dashboard.setFixedHeight(1078)
+        self.dashboard.fullscreen()
+        self.dashboard.show()
         self.fullscreen_dialog = None
 
     def refresh(self):
-        self.set_memory_range()
-        self.set_vram_range()
         self.update_record_markers()
         self.update_activity()
-        if not self.samples:
-            for curve in self.curves.values():
-                curve.setData([], [])
-            for label in self.value_labels.values():
-                label.setText("No samples")
-            self.cursor.setRange(0, 0)
-            self.cursor_label.setText("Time: —")
-            for bar in self.core_bars:
-                bar.setValue(0)
-                bar.setFormat("—")
-            for row in range(len(self.metrics)):
-                for col in range(1, 5):
-                    self.table.item(row, col).setText("—")
-                    self.table.item(row, col).setData(Qt.ItemDataRole.UserRole, None)
-            return
-        if self.follow.isChecked():
+        if self.samples and (self.viewing_live or self.follow.isChecked()):
             last = self.samples[-1]["elapsed"]
             if not self.viewing_live:
                 last = max(last, self.metadata.get("duration", last))
-            window = self.range_mode.currentData()
             earliest = self.samples[0]["elapsed"] if self.viewing_live else 0
-            start = max(earliest, last - window) if window and window > 0 else earliest
+            width = self.live_window_seconds
+            start = max(earliest, last - width) if width else earliest
             for spin, value in [(self.start_time, start), (self.end_time, last)]:
                 spin.blockSignals(True)
                 spin.setValue(value)
                 spin.blockSignals(False)
-        start, end = self.bounds()
-        # Allow for the selector precision without dropping the latest sample.
-        selected = [s for s in self.samples if start - 0.05 <= s["elapsed"] <= end + 0.05]
-        x = np.array([s["elapsed"] for s in selected])
-        for key, curve in self.curves.items():
-            values = [metric_value(sample, key) for sample in selected]
-            y = np.array([value if value is not None else np.nan for value in values])
-            if key in ("memory_mib", "vram_mib"):
-                y = y / 1024
-            curve.setData(x, y)
-        for key, plot in self.plots.items():
-            plot.setXRange(start, max(end, start + 1), padding=0)
-            if key not in self.manual_y and key in ("cpu_percent", "gpu_percent"):
-                plot.setYRange(0, 100, padding=0.03)
-            if key not in self.manual_y and key not in ("cpu_percent", "gpu_percent", "memory_mib", "vram_mib"):
-                keys = (key, "write_mib_s") if key == "read_mib_s" else (key,)
-                values = [sample[k] for sample in selected for k in keys
-                          if isinstance(sample.get(k), (int, float)) and math.isfinite(sample[k])]
-                plot.setYRange(0, max(1, max(values, default=0) * 1.1), padding=0)
         self.cursor.blockSignals(True)
-        self.cursor.setRange(0, len(self.samples) - 1)
-        if self.cursor_follows and self.follow.isChecked():
-            self.cursor.setValue(len(self.samples) - 1)
+        self.cursor.setRange(0, max(0, len(self.samples) - 1))
+        if self.cursor_follows:
+            self.cursor.setValue(max(0, len(self.samples) - 1))
         self.cursor.blockSignals(False)
-        self.update_cursor(self.cursor.value())
+        self.update_cursor(self.cursor.value(), render=False)
+        self.render_charts()
         self.update_maxima()
 
-    def update_cursor(self, index):
+    def render_charts(self):
+        start, end = self.bounds()
+        if end <= start: end = start + 1
+        selected = [sample for sample in self.samples if start - .05 <= sample['elapsed'] <= end + .05]
+        charts = []
+        for key, (title, unit, _) in self.chart_specs.items():
+            x, series = self.chart_points(key, selected)
+            values = [v for trace in series for v in trace['y'] if v is not None]
+            capacity = None
+            if key == 'memory_mib':
+                ram, swap = self.ram_capacity_gib(), self.swap_capacity_gib()
+                if ram is not None and swap is not None: capacity = ram + swap
+            elif key == 'vram_mib': capacity = self.vram_capacity_gib()
+            elif key in ('cpu_percent', 'gpu_percent'): capacity = 100
+            yrange = self.manual_y.get(key, [0, capacity if capacity is not None else max(1, max(values, default=0) * 1.1)])
+            ticks = None
+            if capacity and key in ('memory_mib', 'vram_mib') and key not in self.manual_y:
+                step = 2 ** math.ceil(math.log2(capacity / 4))
+                ticks = [i * step for i in range(math.ceil(capacity / step)) if i * step < capacity - step * .35] + [capacity]
+            self.chart_ranges[key] = [[start, end], list(yrange)]
+            charts.append(dict(key=key, title=title, unit=unit, x=x, series=series, yRange=yrange, ticks=ticks,
+                               ramLimit=self.ram_capacity_gib() if key == 'memory_mib' else None,
+                               value=self.chart_values.get(key, 'No samples')))
+        cursor = self.samples[min(self.cursor.value(), len(self.samples) - 1)]['elapsed'] if self.samples else None
+        self.dashboard.render(dict(charts=charts, range=[start, end], live=self.viewing_live,
+                                   earliest=self.samples[0]['elapsed'] if self.samples else 0,
+                                   cursor=cursor, cursorFollows=self.cursor_follows,
+                                   markers=self.chart_markers, epoch=self.chart_epoch))
+
+    def update_cursor(self, index, render=True):
         if not self.samples:
             return
         sample = self.samples[min(index, len(self.samples) - 1)]
         self.cursor_label.setText("Time: " + clock(sample["elapsed"]))
-        for key, line in self.lines.items():
-            line.setPos(sample["elapsed"])
+        for key in self.chart_specs:
             value = metric_value(sample, key)
-            display, unit = display_metric(key, value, dict((k,u) for k,_,u in self.metrics)[key])
+            display, unit = display_metric(key, value, self.chart_specs[key][1])
             label = "Unavailable" if display is None else f"{display:.2f} {unit}"
             if key == "memory_mib" and display is not None:
                 ram, swap = self.ram_capacity_gib(), self.swap_capacity_gib()
@@ -792,7 +716,11 @@ class Window(QMainWindow):
             if key == "read_mib_s":
                 write = sample.get("write_mib_s")
                 label = f"Read: {label} · write: " + (f"{write:.2f} MiB/s" if write is not None else "unavailable")
-            self.value_labels[key].setText(label)
+            if key == "net_recv_mbps":
+                upload = sample.get("net_sent_mbps")
+                label = "Download: " + label + " · upload: " + (f"{upload:.2f} Mb/s" if upload is not None else "unavailable")
+                label += " · includes Internet and LAN"
+            self.chart_values[key] = label
         cpus = sample.get("cpu_system", [])
         if cpus and len(cpus) != len(self.core_bars):
             self._core_layout(len(cpus))
@@ -801,12 +729,8 @@ class Window(QMainWindow):
             bar.setValue(round(cpus[i]) if available else 0)
             bar.setFormat("%p%" if available else "—")
         self.core_time.setText(f"{clock(sample['elapsed'])} · whole-system activity, including other programs. Each bar ranges from 0 to 100%.")
-
-    def chart_clicked(self, plot, event):
-        if not self.samples or event.button() != Qt.MouseButton.LeftButton or not plot.getViewBox().sceneBoundingRect().contains(event.scenePos()):
-            return
-        elapsed = plot.plotItem.vb.mapSceneToView(event.scenePos()).x()
-        self.select_time(elapsed)
+        if render:
+            self.render_charts()
 
     def select_time(self, elapsed):
         self.cursor_follows = False
@@ -860,6 +784,8 @@ class Window(QMainWindow):
             self.metadata, self.samples = metadata, samples
             self.viewing_live = False
             self.manual_y.clear()
+            self.live_window_seconds = None
+            self.chart_epoch += 1
             self.cursor_follows = True
             self.session_path = Path(path)
             self.live_button.setEnabled(True)
@@ -922,4 +848,5 @@ class Window(QMainWindow):
         if self.fullscreen_dialog:
             self.fullscreen_dialog.close()
         self.clock_timer.stop()
+        self.dashboard.dispose()
         event.accept()

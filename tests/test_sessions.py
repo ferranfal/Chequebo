@@ -55,9 +55,10 @@ def test_combined_memory_peak_uses_simultaneous_usage_and_exports_units(tmp_path
     path = tmp_path / "peaks.csv"
     export_maxima(path, samples, 3, 3, {"scope": "system"})
     rows = list(csv.DictReader(path.open()))
-    assert rows[-1]["unit"] == "GiB"
-    assert float(rows[-1]["recording_peak"]) == 72
-    assert float(rows[-1]["range_peak"]) == 64
+    memory = next(row for row in rows if row["resource"] == "System RAM + swap")
+    assert memory["unit"] == "GiB"
+    assert float(memory["recording_peak"]) == 72
+    assert float(memory["range_peak"]) == 64
     export_samples(path, samples, {"scope": "system"})
     rows = list(csv.DictReader(path.open()))
     assert float(rows[1]["memory_mib"]) == 72*1024

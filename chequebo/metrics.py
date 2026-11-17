@@ -154,6 +154,7 @@ class SystemSampler:
     def __init__(self):
         self.started = self.previous = time.monotonic()
         self.previous_io = self._io()
+        self.previous_network = self._network()
         self.first = True
         self.gpu = GPU()
         psutil.cpu_percent(percpu=True)
@@ -165,6 +166,25 @@ class SystemSampler:
         except (OSError, psutil.Error):
             return None
 
+    @staticmethod
+    def _network():
+        """Prefer physical adapters to avoid counting VPN/bridge traffic twice."""
+        try:
+            counters = psutil.net_io_counters(pernic=True, nowrap=True)
+            physical = [name for name in counters if (Path('/sys/class/net') / name / 'device').exists()]
+            routes = []
+            try:
+                for line in Path('/proc/net/route').read_text().splitlines()[1:]:
+                    parts = line.split()
+                    if len(parts) > 3 and parts[1] == '00000000' and int(parts[3], 16) & 1:
+                        routes.append(parts[0])
+            except (OSError, ValueError):
+                pass
+            names = physical or [name for name in routes if name in counters] or [name for name in counters if name != 'lo']
+            return {name: counters[name] for name in names}
+        except (OSError, psutil.Error):
+            return None
+
     def sample(self):
         now = time.monotonic()
         dt = max(now - self.previous, 0.000001)
@@ -172,6 +192,13 @@ class SystemSampler:
         memory, swap = psutil.virtual_memory(), psutil.swap_memory()
         io = self._io()
         reads = writes = None
+        network = self._network()
+        received = sent = None
+        if not self.first and network is not None and self.previous_network is not None:
+            shared = network.keys() & self.previous_network.keys()
+            if shared or not network:
+                received = sum(max(0, network[n].bytes_recv - self.previous_network[n].bytes_recv) for n in shared) * 8 / dt / 1_000_000
+                sent = sum(max(0, network[n].bytes_sent - self.previous_network[n].bytes_sent) for n in shared) * 8 / dt / 1_000_000
         if not self.first and io is not None and self.previous_io is not None:
             reads = max(0, io.read_bytes - self.previous_io.read_bytes) / dt / MIB
             writes = max(0, io.write_bytes - self.previous_io.write_bytes) / dt / MIB
@@ -188,12 +215,15 @@ class SystemSampler:
             "swap_mib": swap.used / MIB,
             "swap_total_mib": swap.total / MIB,
             "read_mib_s": reads, "write_mib_s": writes,
+            "net_recv_mbps": received, "net_sent_mbps": sent,
+            "network_interfaces": sorted(network) if network is not None else [],
             "gpu_percent": activity, "vram_mib": vram,
             "vram_total_mib": self.gpu.total_memory_mib(),
             "processes": len(psutil.pids()),
             "gpu_note": self.gpu.note, "notes": [], "alive": True,
         }
         self.previous, self.previous_io, self.first = now, io, False
+        self.previous_network = network
         return result
 
     def close(self):

@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 import psutil
-from PySide6.QtCore import QThread, Signal
+from PyQt6.QtCore import QThread, pyqtSignal as Signal
 
 from .metrics import GPU, Sampler
 from .session import SessionWriter

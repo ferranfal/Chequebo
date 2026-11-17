@@ -11,7 +11,7 @@ else
 fi
 # Qt 6 needs this library on X11. Debian/Ubuntu can download it from
 # the package repository and use it inside .venv without sudo.
-qt_plugin="$(.venv/bin/python -c 'from PySide6.QtCore import QLibraryInfo; print(QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath) + "/platforms/libqxcb.so")')"
+qt_plugin="$(.venv/bin/python -c 'from PyQt6.QtCore import QLibraryInfo; print(QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath) + "/platforms/libqxcb.so")')"
 if command -v ldd >/dev/null 2>&1 && ldd "$qt_plugin" 2>/dev/null | grep -q 'libxcb-cursor.so.0 => not found'; then
   if command -v apt-get >/dev/null 2>&1 && command -v dpkg-deb >/dev/null 2>&1; then
     download_dir="$(mktemp -d .venv/native-download.XXXXXX)"

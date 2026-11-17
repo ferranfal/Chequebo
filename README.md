@@ -18,9 +18,9 @@ sudo apt install ./chequebo.deb
 If you already cloned it, run `git pull --ff-only` from the project folder first,
 then `sudo apt install ./chequebo.deb`.
 
-The package targets **Ubuntu 24.04 LTS, Intel/AMD 64-bit (amd64)**. It bundles the
-application, Python runtime and Qt interface; APT installs the required system
-libraries. Other Ubuntu versions and ARM packages are not tested yet.
+The package targets **Ubuntu 24.04 LTS, Intel/AMD 64-bit (amd64)**. It includes the
+application, offline Plotly engine and NVIDIA binding; APT installs Python,
+psutil and Qt WebEngine from Ubuntu repositories. Other Ubuntu versions and ARM packages are not tested yet.
 
 You can also download the versioned installer from
 [GitHub Releases](https://github.com/ferranfal/Chequebo/releases/latest).
@@ -66,7 +66,7 @@ Without the NVIDIA extra, CPU, RAM, disk and recording features still work.
 
 ## Use
 
-1. Open **Chequebo** from Ubuntu's applications menu. CPU, RAM, disk and supported
+1. Open **Chequebo** from Ubuntu's applications menu. CPU, RAM, disk, network and supported
    GPU measurements start automatically. There is no program or PID to enter.
 2. The live panel keeps the **last 10 minutes** in memory without writing a
    recording to disk. Change the time range or click a chart to inspect history.
@@ -88,19 +88,24 @@ Without the NVIDIA extra, CPU, RAM, disk and recording features still work.
    indicates. It also shows peaks within the selected range. Click a peak to
    navigate to its time; export a peak report or samples to CSV.
 
-Each chart has **X+/X−**, **Y+/Y−**, **Fit Y**, **Reset** and **Full screen**
-controls. **Fit Y** shows small variations clearly. Vertical zoom persists while
-new samples arrive. **Reset** restores the default scale and time range.
-Use **Restore** or **Esc** to leave full screen; monitoring and recording continue
-in both views, and the recording clock remains visible in full screen.
-Drag a chart to pan, or use the mouse wheel to zoom. Drag/scroll over the left
-axis for Y only or the bottom axis for X only. All charts share the time range.
+Charts use **Plotly**, with a white background, teal lines, subtle grids and
+an always-visible toolbar. Click a chart to activate wheel zoom. Until then,
+the wheel scrolls the dashboard. Moving outside that chart or pressing **Esc**
+returns the wheel to normal scrolling. This also works with a touchpad.
 
-An explicit X zoom, pan or custom time range holds that time window; the status
-then says **FIXED TIME RANGE** and still reports the latest arriving sample.
-**Back to live** resumes scrolling. Selecting a point or zooming only Y does not
-disable **Follow live time**. A status message identifies missing new samples
-or a stopped monitor instead of silently presenting a frozen graph as live.
+The toolbar offers PNG download, box zoom, pan, **X+/X−**, **Y+/Y−**, **Fit Y**,
+**Reset** and **Full screen**. Use **Restore** or **Esc** to leave full screen.
+The recording clock stays visible there, and monitoring continues in both views.
+**Fit Y** shows small variations; vertical zoom survives new incoming samples.
+
+In live mode, **the newest sample always stays at the right edge**. Horizontal
+zoom changes the visible duration, then that window moves forward as samples
+arrive. Panning or inspecting a point never freezes live charts. Choose a preset
+or a custom duration in **Chart time range**. To inspect a fixed historical time
+range, open a saved recording; live monitoring continues in the background.
+**Reset** restores the full available time range and the chart's default Y scale.
+RAM and VRAM retain their machine-capacity scales until you explicitly zoom Y.
+A status message identifies missing new samples or a stopped monitor.
 
 Minimizing keeps monitoring and recording running. Closing the app finishes an
 active recording and stops monitoring. It does not install a background service
@@ -109,7 +114,7 @@ or start automatically at login. By default, recordings go to `~/.local/share/ch
 committed samples can be recovered after an unexpected shutdown.
 
 Recording saves only the period after pressing Record; the preceding live buffer
-is not added. The first recorded CPU/disk rate is unavailable because its interval
+is not added. The first recorded CPU/disk/network rate is unavailable because its interval
 would include time before Record. Live history is bounded to ten minutes; saved
 recordings keep the full session on disk. Opening a saved file loads it into
 memory, so very large recordings may take time and substantial RAM to explore.
@@ -180,7 +185,21 @@ is used when NVIDIA is detected; otherwise the AMD adapter is used.
 
 Sampling intervals range from 0.2 to 60 seconds, defaulting to 1 second. Peaks are
 **observed** maxima; spikes between samples can be missed. CPU and disk rates are
-averages over the sampling interval. Network traffic and power are not measured.
+averages over the sampling interval. Power is not measured.
+
+## Network traffic
+
+The network chart shows **Download** and **Upload** in **Mb/s** (megabits per
+second, decimal: 1 MB/s = 8 Mb/s). These are measured transfer rates, not a speed
+test or the connection's maximum bandwidth. Internet and LAN traffic both count.
+Physical network adapters are preferred to avoid counting a VPN or bridge twice;
+where none are exposed, Chequebo uses default-route adapters, then non-loopback
+interfaces as a fallback. The sampled interface names are stored in recordings.
+Adapter changes and counter resets do not create artificial rate spikes. An
+initial or unavailable reading is a gap, not a fabricated measurement.
+
+Download and upload are included in recordings, the peak table, and CSV exports.
+Older recordings without network data show it as unavailable.
 
 ## Headless recording (optional)
 
@@ -230,12 +249,15 @@ stopping recordings, VRAM deduplication, chart navigation, packaged launch behav
 normalization with 1, 4, 8, 16, 64 and 128 logical CPUs, continuous system
 monitoring, repeated recording sessions, bounded live history, memory units,
 RAM/swap capacity changes, recorded GPU capacities, recording markers and timers,
-live cursor inspection, mouse zoom and full-screen restoration. Linux CI runs on Python
+live cursor inspection, click-gated wheel zoom, continuously anchored time ranges,
+network counters and full-screen restoration. Linux CI runs on Python
 3.10, 3.12 and 3.13. Individual GPU drivers need real-hardware validation.
 
-The Qt dependency currently uses the tested 6.11 series. A native reference-count
-crash was reproduced with PySide6 6.12 on Python 3.10 when rendering live charts;
-the upper bound should only be raised after checking that combination again.
+The desktop uses PyQt6 and Qt WebEngine. Plotly.js Cartesian 3.1.0 is bundled
+locally with its MIT notice; no CDN or web server is required. HTTP requests from
+the chart surface are blocked. Tests exercise the actual embedded chart engine,
+including wheel events and toolbar actions. CI disables Chromium's sandbox only
+inside its isolated test runner; the installed application keeps it enabled.
 
 ### Build the Ubuntu package
 
@@ -248,14 +270,15 @@ python3 -m venv .build-venv
 CHEQUEBO_BUILD_PYTHON="$PWD/.build-venv/bin/python" ./packaging/build-deb.sh
 ```
 
-The `.deb` is written to `dist/`. The package contains a standalone directory
-under `/opt/chequebo`, a `chequebo` command, an application-menu entry and an icon.
+The `.deb` is written to `dist/`. The package contains the application source
+under `/usr/lib/chequebo`, a `chequebo` command, an application-menu entry and an icon.
 Building requires internet access to install dependencies; running does not.
 Published GitHub releases trigger a clean Ubuntu build and attach the installer
 and its SHA-256 checksum automatically. After a successful release build, the
 **Bundle Ubuntu installer in repository** workflow verifies the release checksum
 and updates `chequebo.deb` on `main`, so a normal clone includes the installer.
 
-Chequebo code: [MIT](LICENSE). Bundled dependencies retain their own licenses,
-included under `/usr/share/doc/chequebo/third-party` in the Ubuntu package. Qt
-libraries remain separate shared libraries in the bundle.
+Chequebo source: [MIT](LICENSE). Bundled Plotly and NVIDIA notices are included
+under `/usr/share/doc/chequebo/third-party`. Ubuntu supplies Python, psutil, PyQt6
+and Qt under their own licenses; PyQt6 uses GPLv3, compatible with this project's
+MIT source. These system libraries remain separate and receive Ubuntu updates.

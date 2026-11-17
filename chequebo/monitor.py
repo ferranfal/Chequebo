@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 import psutil
-from PySide6.QtCore import QThread, Signal
+from PyQt6.QtCore import QThread, pyqtSignal as Signal
 
 from .metrics import GPU, SystemSampler
 from .session import SessionWriter
@@ -103,7 +103,7 @@ class SystemMonitor(QThread):
                         recorded = {**sample, "elapsed": max(0, tick - self.record_started)}
                         if self.first_record_sample:
                             # Rate intervals must not extend to before Record was pressed.
-                            for key in ("cpu_percent", "cpu_equivalent", "read_mib_s", "write_mib_s"):
+                            for key in ("cpu_percent", "cpu_equivalent", "read_mib_s", "write_mib_s", "net_recv_mbps", "net_sent_mbps"):
                                 recorded[key] = None
                             recorded["cpu_system"] = []
                             self.first_record_sample = False

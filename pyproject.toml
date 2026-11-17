@@ -4,20 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chequebo"
-version = "0.4.1"
+version = "0.5.0"
 description = "Linux desktop system monitor with live history and optional recording"
 requires-python = ">=3.10"
 dependencies = [
-  # Qt 6.12 reproduced a boolean reference-count crash on Python 3.10.
-  "PySide6-Essentials>=6.11.3,<6.12",
-  "pyqtgraph>=0.13.7,<0.15",
-  "psutil>=6,<8",
+  "PyQt6>=6.6,<6.12",
+  "PyQt6-WebEngine>=6.6,<6.12",
+  "psutil>=5.9,<8",
 ]
 
 [project.optional-dependencies]
 nvidia = ["nvidia-ml-py>=12,<14"]
 dev = ["pytest>=8,<10"]
-build = ["pyinstaller>=6.17,<7"]
+build = ["nvidia-ml-py>=12,<14"]
 
 [project.scripts]
 chequebo = "chequebo.__main__:main"
@@ -26,7 +25,7 @@ chequebo = "chequebo.__main__:main"
 include = ["chequebo*"]
 
 [tool.setuptools.package-data]
-chequebo = ["resources/*.svg"]
+chequebo = ["resources/*.svg", "web/*", "web/vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

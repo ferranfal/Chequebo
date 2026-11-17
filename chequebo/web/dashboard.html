@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' qrc: data: blob:; script-src 'self' qrc:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'">
+  <title>Chequebo charts</title>
+  <link rel="stylesheet" href="dashboard.css">
+  <script src="vendor/plotly.min.js" defer></script>
+  <script src="qrc:///qtwebchannel/qwebchannel.js" defer></script>
+  <script src="dashboard.js" defer></script>
+</head>
+<body>
+  <div id="charts" aria-label="Resource history charts"></div>
+  <div id="error" role="alert" hidden></div>
+</body>
+</html>

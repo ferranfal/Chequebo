@@ -10,12 +10,14 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       QT_QPA_PLATFORM: offscreen
+      QTWEBENGINE_DISABLE_SANDBOX: 1
+      QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0 desktop-file-utils
+      - run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0 libnss3 libasound2t64 desktop-file-utils
       - run: python -m pip install -e '.[nvidia,dev,build]'
       - run: python -m pytest -q
       - run: desktop-file-validate packaging/io.github.ferranfal.Chequebo.desktop
@@ -23,12 +25,12 @@ jobs:
       - name: Install and smoke-test the desktop package
         run: |
           sudo apt-get install -y ./dist/chequebo_*.deb
-          chequebo --version
-          chequebo --check-gpu
-          chequebo --headless --interval 0.2 --output /tmp/smoke.chequebo -- /usr/bin/python3 -c 'import time; data=bytearray(8*1024*1024); time.sleep(1)'
-          timeout --preserve-status -s INT 3s chequebo --headless --interval 0.2 --output /tmp/system-smoke.chequebo
+          /usr/bin/chequebo --version
+          /usr/bin/chequebo --check-gpu
+          /usr/bin/chequebo --headless --interval 0.2 --output /tmp/smoke.chequebo -- /usr/bin/python3 -c 'import time; data=bytearray(8*1024*1024); time.sleep(1)'
+          timeout --preserve-status -s INT 3s /usr/bin/chequebo --headless --interval 0.2 --output /tmp/system-smoke.chequebo
           python -c 'from chequebo.session import load_session; m,s=load_session("/tmp/system-smoke.chequebo"); assert m["scope"] == "system" and m["state"] == "stopped" and len(s) >= 2'
-          timeout 5s chequebo || test "$?" = 124
+          /usr/bin/python3 packaging/smoke_desktop.py
           cd dist
           sha256sum chequebo_*.deb > SHA256SUMS
       - uses: actions/upload-artifact@v7

@@ -1,31 +1,26 @@
 #!/usr/bin/env bash
-# Build on Ubuntu 24.04 amd64. Nothing is installed into the host system.
+# Build a small Ubuntu package; APT supplies Python and Qt WebEngine.
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 python_bin="${CHEQUEBO_BUILD_PYTHON:-python3}"
 version="$($python_bin -c 'from chequebo import __version__; print(__version__)')"
 arch="$(dpkg --print-architecture)"
-if [ "$arch" != amd64 ]; then
-  printf 'This package recipe currently supports amd64 only.\n' >&2
-  exit 1
-fi
 build_dir="$PWD/build/deb"
-export PYINSTALLER_CONFIG_DIR="$build_dir/cache"
 stage="$build_dir/stage"
-# Only remove generated staging files, never source or user recordings.
 rm -rf -- "$stage"
-mkdir -p "$stage/DEBIAN" "$stage/opt" "$stage/usr/bin" \
+mkdir -p "$stage/DEBIAN" "$stage/usr/bin" "$stage/usr/lib/chequebo" \
   "$stage/usr/share/applications" "$stage/usr/share/icons/hicolor/scalable/apps" \
   "$stage/usr/share/doc/chequebo" dist
-"$python_bin" -m PyInstaller --noconfirm --clean --onedir --name chequebo \
-  --paths "$PWD" --distpath "$build_dir/bundle" --workpath "$build_dir/pyinstaller" \
-  --specpath "$build_dir" --hidden-import pynvml \
-  --add-data "$PWD/chequebo/resources:chequebo/resources" \
-  --exclude-module tkinter --exclude-module matplotlib --exclude-module scipy \
-  --exclude-module PySide6.QtQml --exclude-module PySide6.QtQuick \
-  packaging/entry.py
-cp -a "$build_dir/bundle/chequebo" "$stage/opt/chequebo"
-ln -s /opt/chequebo/chequebo "$stage/usr/bin/chequebo"
+"$python_bin" - "$stage/usr/lib/chequebo" <<'PY'
+import importlib.util, shutil, sys
+from pathlib import Path
+root=Path(sys.argv[1])
+shutil.copytree('chequebo', root/'chequebo', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+# Include the small official NVIDIA Python binding, without requiring an NVIDIA
+# driver on computers that use AMD, Intel or no supported GPU.
+shutil.copy2(importlib.util.find_spec('pynvml').origin, root/'pynvml.py')
+PY
+install -m 755 packaging/entry.py "$stage/usr/bin/chequebo"
 install -m 644 packaging/io.github.ferranfal.Chequebo.desktop "$stage/usr/share/applications/"
 install -m 644 chequebo/resources/chequebo.svg "$stage/usr/share/icons/hicolor/scalable/apps/io.github.ferranfal.Chequebo.svg"
 install -m 644 LICENSE "$stage/usr/share/doc/chequebo/copyright"
@@ -41,10 +36,10 @@ Architecture: $arch
 Maintainer: Chequebo contributors <89909261+ferranfal@users.noreply.github.com>
 Homepage: https://github.com/ferranfal/Chequebo
 Installed-Size: $installed_size
-Depends: libc6 (>= 2.39), libstdc++6, python3, libgl1, libegl1, libopengl0, libxcb-cursor0, libxkbcommon-x11-0, libfontconfig1
-Description: Linux desktop system monitor with live history and recording
- Monitor the whole computer, optionally save sessions, inspect time ranges and
- export peak reports. Includes an English Qt desktop interface.
+Depends: python3 (>= 3.10), python3-psutil (>= 5.9), python3-pyqt6, python3-pyqt6.qtwebengine, python3-pyqt6.qtwebchannel
+Description: Linux desktop system monitor with live Plotly charts and recording
+ Monitor CPU, RAM, swap, GPU, disk and network. Save sessions, inspect time
+ ranges and export peaks. Includes offline Plotly charts and a desktop icon.
 EOF
 chmod 755 "$stage/DEBIAN"
 dpkg-deb --root-owner-group -Zxz -z3 --build "$stage" "dist/chequebo_${version}_${arch}.deb"

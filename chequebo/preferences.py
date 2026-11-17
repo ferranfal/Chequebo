@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QSettings
+from PyQt6.QtCore import QSettings
 
 
 def recording_settings():

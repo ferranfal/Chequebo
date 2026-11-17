@@ -1,176 +1,168 @@
 import time
 
 import pytest
-from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QWheelEvent
-from PySide6.QtTest import QTest
+from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtGui import QWheelEvent
+from PyQt6.QtTest import QTest
 
-from chequebo.session import SessionWriter, load_session
+from chequebo.session import SessionWriter
 from chequebo.ui import Window
 from test_system import FakeSampler, until
 
 
 def sample(elapsed):
-    return {**FakeSampler().sample(), "elapsed": elapsed, "ram_mib": 10*1024,
-            "ram_total_mib": 64*1024, "swap_total_mib": 100*1024,
-            "vram_mib": 2*1024, "vram_total_mib": 8*1024}
+    return {**FakeSampler().sample(), 'elapsed': elapsed, 'ram_mib': 10*1024,
+            'ram_total_mib': 64*1024, 'swap_total_mib': 100*1024,
+            'vram_mib': 2*1024, 'vram_total_mib': 8*1024}
 
 
-def test_selecting_a_sample_does_not_freeze_live_charts(tmp_path, app):
-    window = Window(tmp_path, auto_start=False)
+def javascript(window, source, app):
+    result = []
+    window.dashboard.page().runJavaScript(source, result.append)
+    until(lambda: bool(result), app, 10)
+    return result[0]
+
+
+def rendered(window, app, expected=None):
+    until(lambda: window.dashboard.ready, app, 10)
+    def done():
+        state = javascript(window, 'window.Chequebo.state()', app)
+        return (state and not state['rendering'] and len(state['plots']) == 6 and
+                (expected is None or state['plots']['cpu_percent']['x'][1] == expected))
+    until(done, app, 10)
+
+
+def test_zoom_and_selection_keep_latest_sample_at_right(tmp_path, app):
+    w = Window(tmp_path, auto_start=False)
     try:
-        for t in range(1, 4):
-            window.add_sample(sample(t))
-        window.select_time(1)
-        window.add_sample(sample(4))
-        assert window.follow.isChecked()
-        assert window.cursor.value() == 0
-        assert window.bounds()[1] == 4
-        assert window.curves["memory_mib"].getData()[0][-1] == 4
-        window.cursor.setValue(1)
-        window.add_sample(sample(5))
-        assert window.bounds()[1] == 5
-        assert window.cursor.value() == 1
-        assert window.live_button.isEnabled()
-        window.live_button.click()
-        assert window.cursor_follows and window.cursor.value() == 4
-        window.end_time.setValue(3)
-        window.add_sample(sample(6))
-        assert window.bounds()[1] == 3
-        assert "FIXED TIME RANGE" in window.view_status.text()
-        assert "00:00:06" in window.view_status.text()
-        window.live_button.click()
-        assert window.bounds()[1] == 6
+        for t in range(1, 21): w.add_sample(sample(t))
+        w.select_time(3)
+        w.zoom_chart('cpu_percent', 0, .5)
+        width = w.live_window_seconds
+        w.zoom_chart('memory_mib', 1, .5)
+        yrange = w.chart_ranges['memory_mib'][1]
+        w.add_sample(sample(21))
+        assert w.bounds() == pytest.approx((21-width, 21))
+        assert w.chart_ranges['memory_mib'][1] == yrange
+        assert w.cursor.value() == 2
+        assert w.follow.isChecked()
+        # Dragging a live chart into the past changes width, never freezes time.
+        w.chart_event({'type':'range', 'key':'cpu_percent', 'x':[2,7], 'y':None})
+        w.add_sample(sample(22))
+        assert w.bounds() == (17,22)
+        w.follow.setChecked(False)
+        assert w.follow.isChecked()
+        w.reset_chart('memory_mib')
+        assert w.chart_ranges['memory_mib'][1] == [0,164]
+        assert w.bounds()[1] == 22
     finally:
-        window.close()
+        w.close()
 
 
-@pytest.mark.parametrize("key,capacity", [("memory_mib", 164), ("vram_mib", 8)])
-def test_zoom_survives_samples_and_fullscreen_restores_the_same_chart(tmp_path, app, key, capacity):
-    window = Window(tmp_path, auto_start=False)
+def test_plotly_wheel_requires_click_and_preserves_live_edge(tmp_path, app, monkeypatch):
+    w = Window(tmp_path, auto_start=False)
     try:
-        window.show()
-        for t in range(1, 10):
-            window.add_sample(sample(t))
-        app.processEvents()
-        plot = window.plots[key]
-        assert plot.viewRange()[1] == pytest.approx([0, capacity])
-        window.chart_buttons[key]["y_in"].click()
-        zoom = plot.viewRange()[1]
-        assert zoom[1] - zoom[0] == pytest.approx(capacity / 2)
-        window.add_sample(sample(10))
-        assert plot.viewRange()[1] == pytest.approx(zoom)
-        assert window.follow.isChecked() and window.bounds()[1] == 10
-        window.chart_buttons[key]["fullscreen"].click()
-        app.processEvents()
-        assert window.fullscreen_dialog.isFullScreen()
-        assert plot.height() > 180
-        window.chart_buttons[key]["fit_y"].click()
-        fitted = plot.viewRange()[1]
-        assert fitted[1] - fitted[0] < 1
-        window.add_sample(sample(11))
-        assert plot.viewRange()[1] == pytest.approx(fitted)
-        assert window.curves[key].getData()[0][-1] == 11
-        QTest.keyClick(window.fullscreen_dialog, Qt.Key.Key_Escape)
-        app.processEvents()
-        assert window.fullscreen_dialog is None
-        assert window.plots[key] is plot and plot.height() == 180
-        window.chart_buttons[key]["x_in"].click()
-        assert not window.follow.isChecked()
-        bounds = window.bounds()
-        window.add_sample(sample(12))
-        assert window.bounds() == bounds
-        window.chart_buttons[key]["reset"].click()
-        assert window.follow.isChecked() and window.bounds()[1] == 12
-        assert plot.viewRange()[1] == pytest.approx([0, capacity])
+        for t in range(1,31): w.add_sample(sample(t))
+        w.show()
+        rendered(w, app, 30)
+        # Send real Qt wheel events to the Chromium render widget.
+        target = w.dashboard.focusProxy()
+        point = QPoint(280,210)
+        def wheel():
+            event=QWheelEvent(QPointF(point),QPointF(target.mapToGlobal(point)),QPoint(),QPoint(0,-120),
+                              Qt.MouseButton.NoButton,Qt.KeyboardModifier.NoModifier,Qt.ScrollPhase.NoScrollPhase,False)
+            app.sendEvent(target,event)
+        QTest.mouseMove(target, point)
+        before = w.bounds()
+        wheel()
+        until(lambda: w.scroll.verticalScrollBar().value() > 0, app)
+        assert w.bounds() == before
+        w.scroll.verticalScrollBar().setValue(0)
+        QTest.mouseClick(target,Qt.MouseButton.LeftButton,pos=point)
+        until(lambda: javascript(w,'window.Chequebo.state().active',app) == 'memory_mib', app)
+        wheel()
+        until(lambda: 'memory_mib' in w.manual_y, app)
+        assert w.scroll.verticalScrollBar().value() == 0
+        w.add_sample(sample(31))
+        rendered(w, app, 31)
+        assert javascript(w,"window.Chequebo.state().plots.memory_mib.x[1]",app) == 31
+        assert w.follow.isChecked()
+        QTest.keyClick(target,Qt.Key.Key_Escape)
+        until(lambda: javascript(w,'window.Chequebo.state().active',app) is None, app)
+        wheel()
+        until(lambda: w.scroll.verticalScrollBar().value() > 0, app)
+        assert javascript(w,"document.getElementById('error').hidden",app)
+        png = tmp_path / 'chart.png'
+        monkeypatch.setattr('chequebo.charts.QFileDialog.getSaveFileName', lambda *args: (str(png), 'PNG'))
+        javascript(w,"document.querySelector('[data-key=memory_mib] [data-title=\"Download plot as a PNG\"]').click()",app)
+        until(lambda: png.exists() and png.stat().st_size > 100, app, 10)
+        assert png.read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
     finally:
-        window.close()
+        w.close()
 
 
-def test_mouse_wheel_on_y_axis_keeps_time_following(tmp_path, app):
-    window = Window(tmp_path, auto_start=False)
+def test_plotly_toolbar_fullscreen_and_recording_continue(tmp_path, app, monkeypatch):
+    monkeypatch.setattr('chequebo.monitor.SystemSampler',FakeSampler)
+    w=Window(tmp_path)
+    w.interval.setValue(.2)
+    w.show()
     try:
-        window.show()
-        window.add_sample(sample(1))
+        until(lambda: len(w.samples)>=2,app)
+        rendered(w,app)
+        w.start_button.click()
+        until(lambda: w.recording,app)
+        assert w.chart_markers[0] is not None and w.chart_markers[1] is None
+        javascript(w,"document.querySelector('[data-key=cpu_percent] [data-title=\"Zoom X in\"]').click()",app)
+        until(lambda: w.live_window_seconds is not None,app)
+        javascript(w,"document.querySelector('[data-key=cpu_percent] [data-title=\"Full screen / Restore\"]').click()",app)
+        until(lambda: w.fullscreen_dialog is not None,app)
+        assert w.fullscreen_dialog.isFullScreen()
+        before = w.samples[-1]['elapsed']
+        until(lambda: w.samples[-1]['elapsed'] > before+1,app)
+        assert 'Recording' in w.fullscreen_status.text()
+        assert w.bounds()[1] == w.samples[-1]['elapsed']
+        QTest.keyClick(w.dashboard.focusProxy(),Qt.Key.Key_Escape)
+        until(lambda: w.fullscreen_dialog is None,app)
+        w.stop_button.click()
+        until(lambda: w.last_recording is not None,app)
+        assert w.chart_markers[1] > w.chart_markers[0]
+        duration=w.recording_span['duration']
+        w.load_recording(w.last_recording)
+        assert w.chart_markers == [0,duration]
+        assert not w.viewing_live and w.monitor.isRunning()
+        w.set_chart_time_range(.1,.5)
+        assert w.bounds() == [.1,.5]
+        w.show_live()
+        before=len(w.samples)
+        until(lambda: len(w.samples)>before,app)
+        assert w.bounds()[1] == w.samples[-1]['elapsed']
+        w.start_button.click()
+        until(lambda: w.recording,app)
+        assert w.chart_markers[1] is None
+        w.stop_button.click()
+        until(lambda: not w.recording,app)
+    finally:
+        w.monitor.stop()
+        assert w.monitor.wait(3000)
         app.processEvents()
-        plot = window.plots["memory_mib"]
-        axis = plot.getAxis("left")
-        pos = plot.mapFromScene(axis.mapToScene(axis.geometry().center() - axis.pos()))
-        wheel = QWheelEvent(QPointF(pos), QPointF(plot.viewport().mapToGlobal(pos)),
-                            QPoint(), QPoint(0, 120), Qt.MouseButton.NoButton,
-                            Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.ScrollUpdate, False)
-        app.sendEvent(plot.viewport(), wheel)
-        app.processEvents()
-        assert "memory_mib" in window.manual_y
-        zoom = plot.viewRange()[1]
-        assert zoom != [0, 164]
-        assert window.follow.isChecked()
-        window.add_sample(sample(2))
-        assert plot.viewRange()[1] == pytest.approx(zoom)
-    finally:
-        window.close()
+        w.close()
 
 
-def test_record_clock_markers_and_live_updates_survive_interaction(tmp_path, app, monkeypatch):
-    monkeypatch.setattr("chequebo.monitor.SystemSampler", FakeSampler)
-    window = Window(tmp_path)
-    window.interval.setValue(.2)
-    window.show()
+def test_saved_gpu_capacity_and_network_legacy_are_preserved(tmp_path, app):
+    path=tmp_path/'legacy.chequebo'
+    writer=SessionWriter(path,{'scope':'system','cpu_count':8,'vram_total_mib':24*1024})
+    saved=sample(1)
+    saved['vram_total_mib']=24*1024
+    saved.pop('net_recv_mbps'); saved.pop('net_sent_mbps')
+    writer.append(saved); writer.close()
+    w=Window(tmp_path,auto_start=False)
     try:
-        until(lambda: len(window.samples) >= 2, app)
-        window.follow.setChecked(False)
-        window.start_button.click()
-        until(lambda: window.recording, app)
-        assert window.follow.isChecked()
-        start = window.recording_span["live_started_elapsed"]
-        for first, last in window.record_lines.values():
-            assert first.value() == start and first.isVisible() and not last.isVisible()
-        window.select_time(0)
-        before = window.samples[-1]["elapsed"]
-        window.chart_buttons["cpu_percent"]["fullscreen"].click()
-        until(lambda: window.samples[-1]["elapsed"] > before + 1, app)
-        assert window.record_clock.text().startswith("● Recording · ")
-        assert not window.record_clock.text().endswith("00:00:00")
-        assert window.curves["cpu_percent"].getData()[0][-1] > before
-        assert "Recording" in window.fullscreen_status.text()
-        window.chart_buttons["cpu_percent"]["fullscreen"].click()
-        window.stop_button.click()
-        until(lambda: window.last_recording is not None, app)
-        duration = window.recording_span["duration"]
-        clock_text = window.record_clock.text()
-        for first, last in window.record_lines.values():
-            assert last.isVisible() and last.value() == pytest.approx(start + duration)
-        before = window.samples[-1]["elapsed"]
-        until(lambda: window.samples[-1]["elapsed"] > before + .4, app)
-        assert window.record_clock.text() == clock_text
-        metadata, recorded = load_session(window.last_recording)
-        assert metadata["duration"] >= recorded[-1]["elapsed"]
-        assert metadata["live_ended_elapsed"] == pytest.approx(start + duration)
-        window.load_recording(window.last_recording)
-        for first, last in window.record_lines.values():
-            assert first.value() == 0 and last.value() == duration
-        window.start_button.click()
-        until(lambda: window.recording, app)
-        assert window.viewing_live and window.follow.isChecked()
-        assert window.recording_span["live_started_elapsed"] > start
-        assert not window.record_lines["memory_mib"][1].isVisible()
+        w.add_sample(sample(2))
+        w.load_recording(path)
+        assert w.chart_ranges['vram_mib'][1] == [0,24]
+        assert w.chart_values['vram_mib'] == '2.00 / 24.00 GiB used'
+        assert 'Unavailable' in w.chart_values['net_recv_mbps']
+        w.show_live()
+        assert w.chart_ranges['vram_mib'][1] == [0,8]
     finally:
-        window.close()
-        assert not window.monitor.isRunning()
-
-
-def test_recorded_vram_capacity_uses_the_recorded_gpu(tmp_path, app):
-    path = tmp_path / "gpu.chequebo"
-    writer = SessionWriter(path, {"scope": "system", "cpu_count": 8})
-    writer.append({**sample(1), "vram_total_mib": 24*1024})
-    writer.close()
-    window = Window(tmp_path, auto_start=False)
-    try:
-        window.add_sample(sample(1))
-        window.load_recording(path)
-        assert window.plots["vram_mib"].viewRange()[1] == pytest.approx([0, 24])
-        assert window.value_labels["vram_mib"].text() == "2.00 / 24.00 GiB used"
-        window.show_live()
-        assert window.plots["vram_mib"].viewRange()[1] == pytest.approx([0, 8])
-    finally:
-        window.close()
+        w.close()

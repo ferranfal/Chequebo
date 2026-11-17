@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt
+from PyQt6.QtCore import Qt
 import pytest
 from chequebo.session import SessionWriter
 from chequebo.ui import Window
@@ -30,7 +30,7 @@ def test_window_supports_other_cpu_counts_and_peak_navigation(tmp_path, app):
         window.jump_to_peak(0, 1)
         assert window.cursor.value() == 0
         assert window.bounds()[0] == 0
-        assert window.value_labels["gpu_percent"].text() == "Unavailable"
+        assert window.chart_values["gpu_percent"] == "Unavailable"
         assert window.table.item(0, 1).data(Qt.ItemDataRole.UserRole) == 1
     finally:
         window.close()
@@ -46,13 +46,13 @@ def test_memory_chart_uses_gib_and_tracks_configured_capacity(tmp_path, app):
                       "ram_total_mib": 64 * 1024, "swap_total_mib": swap_total * 1024}
             window.add_sample(sample)
             app.processEvents()
-            assert window.plots["memory_mib"].viewRange()[1] == pytest.approx([0, 64 + swap_total])
-            assert window.ram_limit.value() == 64
-            assert window.ram_limit.isVisible()
-            assert window.curves["memory_mib"].getData()[1][-1] == 48 + min(24, swap_total)
-            assert f"/ {64 + swap_total:.2f} GiB" in window.value_labels["memory_mib"].text()
+            assert window.chart_ranges["memory_mib"][1] == pytest.approx([0, 64 + swap_total])
+            assert window.ram_capacity_gib() == 64
+            assert window.ram_capacity_gib() is not None
+            assert window.dashboard.payload["charts"][0]["series"][0]["y"][-1] == 48 + min(24, swap_total)
+            assert f"/ {64 + swap_total:.2f} GiB" in window.chart_values["memory_mib"]
         window.select_time(1)
-        assert "RAM 48.00 + swap 24.00 GiB" in window.value_labels["memory_mib"].text()
+        assert "RAM 48.00 + swap 24.00 GiB" in window.chart_values["memory_mib"]
         assert window.table.item(0, 1).text() == "48.00 GiB"
         assert window.table.item(1, 1).text() == "24.00 GiB"
         assert window.table.item(8, 1).text() == "72.00 GiB"
@@ -70,12 +70,12 @@ def test_recorded_memory_capacity_is_independent_of_current_computer(tmp_path, a
     try:
         window.live_metadata.update(ram_total_mib=64 * 1024, swap_total_mib=100 * 1024)
         window.load_recording(path)
-        assert window.plots["memory_mib"].viewRange()[1] == pytest.approx([0, 24])
-        assert window.ram_limit.value() == 16
+        assert window.chart_ranges["memory_mib"][1] == pytest.approx([0, 24])
+        assert window.ram_capacity_gib() == 16
         window.add_sample({**samples(8)[0], "ram_total_mib": 64 * 1024, "swap_total_mib": 200 * 1024})
-        assert window.plots["memory_mib"].viewRange()[1] == pytest.approx([0, 24])
+        assert window.chart_ranges["memory_mib"][1] == pytest.approx([0, 24])
         window.show_live()
-        assert window.plots["memory_mib"].viewRange()[1] == pytest.approx([0, 264])
-        assert window.ram_limit.value() == 64
+        assert window.chart_ranges["memory_mib"][1] == pytest.approx([0, 264])
+        assert window.ram_capacity_gib() == 64
     finally:
         window.close()
