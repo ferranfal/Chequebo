@@ -43,7 +43,11 @@ class ProcessInspector(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().hide()
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        # Qt 6.4 otherwise remeasures hundreds of rows after each cell change,
+        # blocking the event loop long enough to starve the charts.
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        for column, width in ((0,65), (2,75), (3,65), (4,90), (5,85)):
+            self.table.setColumnWidth(column, width)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.setMinimumHeight(180)
         self.table.itemSelectionChanged.connect(self.selection_changed)
@@ -121,6 +125,7 @@ class ProcessInspector(QWidget):
         rows = [row for row in self.sample.get('process_snapshot', [])
                 if query in (' '.join(str(row['info'].get(k) or '') for k in ('pid', 'name', 'command'))).casefold()]
         self.rows = sorted(rows, key=lambda row: row.get(key) if row.get(key) is not None else -float('inf'), reverse=True)
+        self.table.setUpdatesEnabled(False)
         self.table.blockSignals(True)
         self.table.setRowCount(len(self.rows))
         selected = None
@@ -143,6 +148,7 @@ class ProcessInspector(QWidget):
         else:
             self.table.clearSelection()
         self.table.blockSignals(False)
+        self.table.setUpdatesEnabled(True)
         self.selection_changed()
 
     def selection_changed(self):
