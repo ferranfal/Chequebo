@@ -112,6 +112,7 @@ def test_plotly_toolbar_fullscreen_and_recording_continue(tmp_path, app, monkeyp
         w.start_button.click()
         until(lambda: w.recording,app)
         assert w.chart_markers[0] is not None and w.chart_markers[1] is None
+        dashboard_height = w.dashboard.height()
         javascript(w,"document.querySelector('[data-key=cpu_percent] [data-title=\"Zoom X in\"]').click()",app)
         until(lambda: w.live_window_seconds is not None,app)
         javascript(w,"document.querySelector('[data-key=cpu_percent] [data-title=\"Full screen / Restore\"]').click()",app)
@@ -123,6 +124,8 @@ def test_plotly_toolbar_fullscreen_and_recording_continue(tmp_path, app, monkeyp
         assert w.bounds()[1] == w.samples[-1]['elapsed']
         QTest.keyClick(w.dashboard.focusProxy(),Qt.Key.Key_Escape)
         until(lambda: w.fullscreen_dialog is None,app)
+        assert w.dashboard.height() == dashboard_height
+        until(lambda: javascript(w,"!document.body.classList.contains('full') && document.getElementById('charts').getBoundingClientRect().bottom <= window.innerHeight",app),app)
         w.stop_button.click()
         until(lambda: w.last_recording is not None,app)
         assert w.chart_markers[1] > w.chart_markers[0]

@@ -24,6 +24,8 @@ from .peaks import describe_peak
 from .preferences import recording_directory, recording_settings
 from .session import clock, display_metric, export_maxima, export_samples, export_processes, load_session, maximum, metrics_for, metric_value
 
+DASHBOARD_HEIGHT = 1174  # Three chart rows, including peak buttons, gaps and padding.
+
 
 class Window(QMainWindow):
     def __init__(self, data_dir=None, auto_start=True, settings=None):
@@ -204,7 +206,7 @@ class Window(QMainWindow):
             "net_recv_mbps": ("Network · download / upload", "Mb/s", [("net_recv_mbps", "Download"), ("net_sent_mbps", "Upload")]),
         }
         self.dashboard = PlotlyDashboard(self)
-        self.dashboard.setFixedHeight(1174)
+        self.dashboard.setFixedHeight(DASHBOARD_HEIGHT)
         self.dashboard.event_received.connect(self.chart_event)
         self.layout.addWidget(self.dashboard)
         self.dashboard_index = self.layout.indexOf(self.dashboard)
@@ -669,7 +671,7 @@ class Window(QMainWindow):
     def restore_chart(self, key, dialog):
         dialog.layout().removeWidget(self.dashboard)
         self.layout.insertWidget(self.dashboard_index, self.dashboard)
-        self.dashboard.setFixedHeight(1078)
+        self.dashboard.setFixedHeight(DASHBOARD_HEIGHT)
         self.dashboard.fullscreen()
         self.dashboard.show()
         self.fullscreen_dialog = None
