@@ -25,8 +25,10 @@ try:
                 state.clear()
     assert state and state[-1] and len(state[-1]['plots'])==6, 'Plotly did not render all six charts'
     assert 'net_recv_mbps' in window.samples[-1]
+    assert window.samples[-1]['process_snapshot'], 'No process snapshot in the installed app'
+    assert window.inspector.table.rowCount() > 0, 'The installed process inspector is empty'
     assert window.bounds()[1] == window.samples[-1]['elapsed']
-    print('Installed desktop: six Plotly charts, live samples and network metrics OK')
+    print('Installed desktop: six Plotly charts, live samples, process inspector and network metrics OK')
 finally:
     window.close()
     app.processEvents()

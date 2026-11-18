@@ -4,6 +4,7 @@ import csv
 import json
 import math
 import sqlite3
+import zlib
 from pathlib import Path
 
 # key, title, unit. None means unavailable and is never converted to zero.
@@ -82,6 +83,9 @@ class SessionWriter:
         self.connection.execute(
             "CREATE TABLE samples (seq INTEGER PRIMARY KEY, elapsed REAL, payload TEXT)"
         )
+        self.connection.execute('CREATE TABLE process_info (id INTEGER PRIMARY KEY, payload TEXT UNIQUE)')
+        self.connection.execute('CREATE TABLE process_samples (seq INTEGER PRIMARY KEY, payload BLOB)')
+        self.process_info_ids = {}
         self.set_meta({"format": "chequebo", "version": 1, **metadata})
 
     def set_meta(self, metadata):
@@ -92,10 +96,23 @@ class SessionWriter:
         self.connection.commit()
 
     def append(self, sample):
-        self.connection.execute(
+        process_payload = None
+        if 'process_snapshot' in sample:
+            rows = []
+            for row in sample['process_snapshot']:
+                info = json.dumps(row['info'], sort_keys=True)
+                if info not in self.process_info_ids:
+                    cursor = self.connection.execute('INSERT INTO process_info (payload) VALUES (?)', (info,))
+                    self.process_info_ids[info] = cursor.lastrowid
+                rows.append({**row, 'info': self.process_info_ids[info]})
+            process_payload = zlib.compress(json.dumps(rows, allow_nan=False, separators=(',', ':')).encode(), level=1)
+            sample = {key: value for key, value in sample.items() if key != 'process_snapshot'}
+        cursor = self.connection.execute(
             "INSERT INTO samples (elapsed, payload) VALUES (?, ?)",
             (sample["elapsed"], json.dumps(sample, allow_nan=False)),
         )
+        if process_payload is not None:
+            self.connection.execute('INSERT INTO process_samples VALUES (?, ?)', (cursor.lastrowid, process_payload))
         self.connection.commit()  # Every committed sample survives an unexpected shutdown.
 
     def close(self):
@@ -109,14 +126,27 @@ def load_session(path):
         metadata = {k: json.loads(v) for k, v in connection.execute("SELECT key, value FROM meta")}
         if metadata.get("format") != "chequebo" or metadata.get("version") != 1:
             raise ValueError("This file is not a supported Chequebo recording.")
-        samples = [json.loads(row[0]) for row in connection.execute(
-            "SELECT payload FROM samples ORDER BY seq"
-        )]
+        has_snapshots = connection.execute("SELECT 1 FROM sqlite_master WHERE name='process_samples'").fetchone()
+        query = ('SELECT s.payload,p.payload FROM samples s LEFT JOIN process_samples p ON p.seq=s.seq ORDER BY s.seq'
+                 if has_snapshots else 'SELECT payload,NULL FROM samples ORDER BY seq')
+        samples = []
+        for payload, process_payload in connection.execute(query):
+            sample = json.loads(payload)
+            if process_payload is not None:
+                sample['process_snapshot'] = json.loads(zlib.decompress(process_payload))
+            samples.append(sample)
+        has_processes = connection.execute("SELECT 1 FROM sqlite_master WHERE name='process_info'").fetchone()
+        process_info = {key: json.loads(value) for key, value in connection.execute('SELECT id,payload FROM process_info')} if has_processes else {}
         for sample in samples:
             if not isinstance(sample, dict) or not isinstance(sample.get("elapsed"), (float, int)):
                 raise ValueError("The recording contains invalid samples.")
+            for row in sample.get('process_snapshot', []):
+                if isinstance(row.get('info'), int):
+                    if row['info'] not in process_info:
+                        raise ValueError('The recording is missing process information.')
+                    row['info'] = process_info[row['info']]
         return metadata, samples
-    except (sqlite3.Error, json.JSONDecodeError) as exc:
+    except (sqlite3.Error, json.JSONDecodeError, zlib.error) as exc:
         raise ValueError(f"Unable to read the recording: {exc}") from exc
     finally:
         connection.close()
@@ -143,3 +173,15 @@ def export_maxima(path, samples, start, end, metadata=None):
                              whole_value if whole else "", whole["elapsed"] if whole else "",
                              selected_value if selected else "", selected["elapsed"] if selected else "",
                              start, end])
+
+
+def export_processes(path, samples):
+    keys = ['timestamp', 'elapsed', 'identity', 'pid', 'ppid', 'name', 'user', 'command',
+            'cpu_percent', 'cpu_equivalent', 'rss_mib', 'ram_delta_mib', 'vram_mib']
+    with open(path, 'w', encoding='utf-8', newline='') as output:
+        writer = csv.DictWriter(output, fieldnames=keys, extrasaction='ignore')
+        writer.writeheader()
+        for sample in samples:
+            for process in sample.get('process_snapshot', []):
+                writer.writerow({**process, **process['info'], 'timestamp': sample.get('timestamp'),
+                                 'elapsed': sample['elapsed']})

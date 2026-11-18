@@ -88,7 +88,7 @@ Without the NVIDIA extra, CPU, RAM, disk and recording features still work.
    indicates. It also shows peaks within the selected range. Click a peak to
    navigate to its time; export a peak report or samples to CSV.
 
-Charts use **Plotly**, with a white background, teal lines, subtle grids and
+Charts use **Plotly**, with a dark background, bright teal lines, subtle grids and
 an always-visible toolbar. Click a chart to activate wheel zoom. Until then,
 the wheel scrolls the dashboard. Moving outside that chart or pressing **Esc**
 returns the wheel to normal scrolling. This also works with a touchpad.
@@ -141,7 +141,7 @@ automatically, including when a recording was made on a different machine.
 By default, the memory chart uses **GiB** and a fixed vertical range from zero to **physical
 RAM + configured swap**. A **red horizontal line** marks the physical RAM limit.
 For example, 64 GiB of RAM and 100 GiB of swap produce a 0–164 GiB axis with the
-line at 64 GiB. The blue curve shows combined usage; the caption separates RAM
+line at 64 GiB. The teal curve shows combined usage; the caption separates RAM
 and swap usage, since Linux can use swap even while RAM remains available.
 Changing configured swap updates the live scale automatically on the next sample.
 Swap adds virtual memory capacity; it is not extra physical RAM.
@@ -200,6 +200,77 @@ initial or unavailable reading is a gap, not a fabricated measurement.
 
 Download and upload are included in recordings, the peak table, and CSV exports.
 Older recordings without network data show it as unavailable.
+
+## Investigate a spike: processes and Python phases
+
+The **Processes at selected time** panel stays beside the charts. Click a chart
+point, move the time slider, or click a peak to inspect that sample. Live charts
+keep advancing while the panel stays on the selected instant. **Follow latest**
+resumes process updates; **Processes** shows or hides the panel. Drag its title
+bar to move it or use it as a separate window.
+
+Choose **Most RAM**, **Most CPU**, **RAM growth**, or **Most VRAM**. Filter by PID,
+program or command. Selecting a row shows the complete recorded command (for
+example, `python algorithm.py --dataset train`), owner, start time, threads and
+the parent chain captured at that instant. It can distinguish Python scripts
+and workers, rather than displaying just `python`. Parent information may be
+missing after exit or reparenting; it is not a complete process-launch audit.
+
+All accessible processes are sampled automatically and saved while recording.
+Identities include process creation time to distinguish reused PIDs. Stable
+metadata is stored once and process snapshots are compressed. **Export process
+history to CSV** exports the current live buffer or opened recording. Command
+lines are part of recordings, so review them before sharing a recording.
+
+- **RAM GiB** is RSS: resident memory, including shared pages. Process RSS values
+  must not be added together to explain system RAM; kernel memory, shared memory
+  and caches have different accounting.
+- **CPU %** uses the same total-machine capacity as the system CPU chart.
+  **CPU equivalents** in the details uses 1.0 for one logical CPU fully occupied.
+- **Δ RAM GiB** is the RSS difference from the previous observed sample of that
+  same process. A new or inaccessible baseline is unavailable, not zero.
+- **VRAM GiB** is the allocation reported by NVIDIA per process. It does not
+  identify which process caused the global GPU utilization percentage. Missing
+  attribution, including unsupported drivers, displays a dash.
+
+Snapshots are sampled rather than continuous traces. A short-lived process can
+start and exit between samples. Older recordings still open, but their past
+processes and function calls cannot be reconstructed if they were not recorded.
+
+### Label steps inside a Python algorithm
+
+An OS process list cannot identify a Python method by its name. The optional
+**Python phases** tab records explicitly named blocks, including nested phases
+and different threads. With the Ubuntu package installed, add:
+
+```python
+import sys
+sys.path.insert(0, "/usr/lib/chequebo")
+from chequebo.trace import phase
+
+with phase("load data"):
+    parts = load_data()
+
+with phase("hstack"):
+    result = numpy.hstack(parts)
+```
+
+For source installs, import `chequebo.trace` from the installed environment or
+add the repository path. The helper uses only the Python standard library.
+Open Chequebo, press **Record**, then run the algorithm normally. Select a sample
+and open **Python phases** to see names, PIDs, threads, start times and durations.
+Running phases appear while active. Finished phases are kept in the sample
+interval containing their completion, even if the block finished between two
+samples. A phase that started before Record retains its original start time.
+The tab is available after reopening the recording, even after Python exits.
+
+Mark coarse steps rather than every function call. Markers are best effort,
+sent over a private local socket without blocking or writing files in the
+algorithm; overload can drop markers. A missing end is not fabricated: a process
+that disappears is labeled ended or unavailable. No local variables or arrays
+are captured. A phase coinciding with a RAM increase indicates what was running,
+not proof that a specific line allocated or retained that memory. Automatic
+Python stack sampling without modifying code is not included in this version.
 
 ## Headless recording (optional)
 

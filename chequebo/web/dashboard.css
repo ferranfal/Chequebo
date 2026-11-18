@@ -1,19 +1,19 @@
-:root { color-scheme:light; font-family:Arial,sans-serif; color:#404647; background:#161b23; }
+:root { color-scheme:dark; font-family:Arial,sans-serif; color:#e8eef7; background:#161b23; }
 * { box-sizing:border-box; }
 body { margin:0; overflow:hidden; }
 #charts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; padding:2px; }
-.card { min-width:0; background:white; border:2px solid transparent; border-radius:8px; overflow:hidden; height:350px; }
-.card.active { border-color:#4F858D; }
+.card { min-width:0; background:#1c2531; border:2px solid #303d4d; border-radius:8px; overflow:hidden; height:350px; }
+.card.active { border-color:#78d5d2; }
 .heading { margin:12px 14px 3px; font-size:15px; font-weight:600; }
-.value { margin:0 14px; min-height:18px; font-size:12px; color:#556265; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.hint { margin:4px 14px 0; font-size:11px; color:#707c7e; }
-.card.active .hint { color:#31727c; font-weight:bold; }
+.value { margin:0 14px; min-height:18px; font-size:12px; color:#c0cdda; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.hint { margin:4px 14px 0; font-size:11px; color:#a5b6c7; }
+.card.active .hint { color:#78d5d2; font-weight:bold; }
 .plot { height:278px; width:100%; }
-.modebar { background:rgba(255,255,255,.96)!important; }
+.modebar { background:rgba(28,37,49,.96)!important; }
 .modebar-btn { padding:3px!important; }
 .modebar-btn svg { height:17px; }
-.modebar-btn path { fill:#53797f!important; }
-.modebar-btn.active { background:#deecee; border-radius:3px; }
+.modebar-btn path { fill:#b7d9df!important; }
+.modebar-btn.active { background:#375260; border-radius:3px; }
 body.full #charts { display:block; }
 body.full .card { display:none; }
 body.full .card.full { display:block; height:100vh; }

@@ -8,6 +8,7 @@ import psutil
 from PyQt6.QtCore import QThread, pyqtSignal as Signal
 
 from .metrics import GPU, SystemSampler
+from .phases import PhaseReceiver
 from .session import SessionWriter
 
 
@@ -56,8 +57,10 @@ class SystemMonitor(QThread):
 
     def run(self):
         sampler = None
+        phases = None
         try:
             sampler = SystemSampler()
+            phases = PhaseReceiver()
             next_sample = time.monotonic()
             while True:
                 try:
@@ -99,13 +102,20 @@ class SystemMonitor(QThread):
                 elif action == "sample":
                     tick = time.monotonic()
                     sample = sampler.sample()
+                    sample['phases'] = phases.sample(sample.get('process_snapshot', []), sample['timestamp'])
+                    sample['phase_note'] = phases.note
                     if self.store is not None:
                         recorded = {**sample, "elapsed": max(0, tick - self.record_started)}
+                        recorded['phases'] = [event for event in sample['phases']
+                                              if event.get('end') is None or event['end'] >= self.metadata['started_at']]
                         if self.first_record_sample:
                             # Rate intervals must not extend to before Record was pressed.
                             for key in ("cpu_percent", "cpu_equivalent", "read_mib_s", "write_mib_s", "net_recv_mbps", "net_sent_mbps"):
                                 recorded[key] = None
                             recorded["cpu_system"] = []
+                            recorded['process_snapshot'] = [
+                                {**row, 'cpu_percent': None, 'cpu_equivalent': None, 'ram_delta_mib': None}
+                                for row in sample.get('process_snapshot', [])]
                             self.first_record_sample = False
                         try:
                             self.store.append(recorded)
@@ -121,3 +131,5 @@ class SystemMonitor(QThread):
             self._finish()
             if sampler:
                 sampler.close()
+            if phases:
+                phases.close()

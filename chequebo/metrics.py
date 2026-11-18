@@ -6,6 +6,8 @@ from pathlib import Path
 
 import psutil
 
+from .processes import ProcessSampler
+
 MIB = 1024 ** 2
 GONE = (psutil.NoSuchProcess, psutil.ZombieProcess, ProcessLookupError)
 
@@ -140,6 +142,30 @@ class GPU:
         except (OSError, ValueError):
             return None
 
+    def process_memory(self):
+        """Reported NVIDIA VRAM owners, not per-process GPU utilization.
+
+        Deduplicate compute/graphics records on a card; sum across cards.
+        Missing or unsupported attribution stays unavailable, never invented.
+        """
+        totals, unavailable = {}, set()
+        for handle in self.handles:
+            records = {}
+            for query in (self.nv.nvmlDeviceGetComputeRunningProcesses,
+                          self.nv.nvmlDeviceGetGraphicsRunningProcesses):
+                try:
+                    for process in query(handle):
+                        value = process.usedGpuMemory
+                        if value is None or value < 0 or value >= (1 << 64) - 1:
+                            unavailable.add(process.pid)
+                        else:
+                            records[process.pid] = max(records.get(process.pid, 0), value)
+                except self.nv.NVMLError:
+                    pass
+            for pid, value in records.items():
+                totals[pid] = totals.get(pid, 0) + value / MIB
+        return {pid: value for pid, value in totals.items() if pid not in unavailable}
+
     def close(self):
         if self.nv:
             try:
@@ -157,6 +183,7 @@ class SystemSampler:
         self.previous_network = self._network()
         self.first = True
         self.gpu = GPU()
+        self.process_sampler = ProcessSampler()
         psutil.cpu_percent(percpu=True)
 
     @staticmethod
@@ -205,6 +232,9 @@ class SystemSampler:
         if self.first:
             cpus = []
         activity, vram = self.gpu.sample()
+        process_snapshot = self.process_sampler.sample(
+            now, len(cpus) or psutil.cpu_count() or 1,
+            getattr(self.gpu, 'process_memory', lambda: {})())
         result = {
             "timestamp": time.time(), "elapsed": now - self.started,
             "cpu_percent": sum(cpus) / len(cpus) if cpus else None,
@@ -220,6 +250,7 @@ class SystemSampler:
             "gpu_percent": activity, "vram_mib": vram,
             "vram_total_mib": self.gpu.total_memory_mib(),
             "processes": len(psutil.pids()),
+            "process_snapshot": process_snapshot,
             "gpu_note": self.gpu.note, "notes": [], "alive": True,
         }
         self.previous, self.previous_io, self.first = now, io, False

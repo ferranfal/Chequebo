@@ -10,7 +10,7 @@ from uuid import uuid4
 import psutil
 from PyQt6.QtCore import Qt, QTimer, QSettings
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDialog,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDockWidget,
     QDoubleSpinBox, QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
     QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton,
     QScrollArea, QSlider, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
@@ -19,8 +19,9 @@ from PyQt6.QtWidgets import (
 from .charts import PlotlyDashboard
 from .metrics import GPU
 from .monitor import SystemMonitor
+from .inspector import ProcessInspector
 from .preferences import recording_directory, recording_settings
-from .session import clock, display_metric, export_maxima, export_samples, load_session, maximum, metrics_for, metric_value
+from .session import clock, display_metric, export_maxima, export_samples, export_processes, load_session, maximum, metrics_for, metric_value
 
 
 class Window(QMainWindow):
@@ -58,7 +59,7 @@ class Window(QMainWindow):
         self.session_path = None
         self.core_bars = []
         self.setWindowTitle("Chequebo · Live system monitor")
-        self.resize(1220, 920)
+        self.resize(1580, 920)
         self.setStyleSheet("""
           QMainWindow, QDialog, QWidget { background:#161b23; color:#e8eef7; }
           QGroupBox { border:1px solid #394352; border-radius:7px; margin-top:10px; padding-top:12px; }
@@ -85,6 +86,7 @@ class Window(QMainWindow):
         self._build_time_controls()
         self._build_charts()
         self._build_maxima()
+        self._build_processes()
         self.status = QLabel("Starting live system monitoring…")
         self.status.setWordWrap(True)
         self.layout.addWidget(self.status)
@@ -125,13 +127,15 @@ class Window(QMainWindow):
         self.live_button = QPushButton("Back to live")
         self.live_button.setEnabled(False)
         gpu = QPushButton("Check GPU")
+        self.process_button = QPushButton('Processes')
+        self.process_button.clicked.connect(lambda: self.process_dock.setVisible(not self.process_dock.isVisible()))
         self.start_button.clicked.connect(self.start_recording)
         self.stop_button.clicked.connect(self.stop_recording)
         self.open_button.clicked.connect(self.open_session)
         self.last_button.clicked.connect(lambda: self.load_recording(self.last_recording))
         self.live_button.clicked.connect(self.show_live)
         gpu.clicked.connect(self.check_gpu)
-        for button in [self.start_button, self.stop_button, self.open_button, self.last_button, self.live_button, gpu]:
+        for button in [self.start_button, self.stop_button, self.open_button, self.last_button, self.live_button, gpu, self.process_button]:
             controls.addWidget(button)
         grid.addLayout(controls, 1, 0, 1, 3)
         self.record_status = QLabel("LIVE · Not recording to disk")
@@ -234,7 +238,12 @@ class Window(QMainWindow):
             bar = self.scroll.verticalScrollBar()
             bar.setValue(bar.value() + round(event.get("dy", 0)))
         elif kind == "select":
+            self.process_dock.show()
+            self.inspector.selected_identity = None
+            self.inspector.sort_resource({'memory_mib': 'rss_mib', 'cpu_percent': 'cpu_percent',
+                                          'gpu_percent': 'vram_mib', 'vram_mib': 'vram_mib'}.get(key, 'rss_mib'))
             self.select_time(event["elapsed"])
+            self.inspector.rebuild()
         elif kind == "fullscreen":
             self.toggle_fullscreen(key)
         elif kind == "restore":
@@ -258,6 +267,28 @@ class Window(QMainWindow):
             elif action == "fit_y": self.fit_y(key)
             elif action == "reset": self.reset_chart(key)
             elif action == "fullscreen": self.toggle_fullscreen(key)
+
+    def _build_processes(self):
+        self.process_dock = QDockWidget('Processes at selected time', self)
+        self.process_dock.setObjectName('process-inspector')
+        self.inspector = ProcessInspector()
+        self.inspector.follow_requested.connect(self.follow_processes)
+        self.inspector.export_requested.connect(self.export_process_history)
+        self.process_dock.setWidget(self.inspector)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.process_dock)
+        self.resizeDocks([self.process_dock], [500], Qt.Orientation.Horizontal)
+
+    def follow_processes(self):
+        self.cursor_follows = True
+        self.refresh()
+
+    def export_process_history(self):
+        path, _ = QFileDialog.getSaveFileName(self, 'Export process history', str(self.data_dir / 'chequebo-processes.csv'), 'CSV (*.csv)')
+        if path:
+            try:
+                export_processes(path, self.samples)
+            except OSError as exc:
+                QMessageBox.warning(self, 'Export failed', str(exc))
 
     def _build_maxima(self):
         group = self.peaks_group = QGroupBox("Live buffer peaks · last 10 minutes")
@@ -695,6 +726,7 @@ class Window(QMainWindow):
         if not self.samples:
             return
         sample = self.samples[min(index, len(self.samples) - 1)]
+        self.inspector.inspect(sample, self.cursor_follows, self.viewing_live)
         self.cursor_label.setText("Time: " + clock(sample["elapsed"]))
         for key in self.chart_specs:
             value = metric_value(sample, key)
@@ -766,12 +798,17 @@ class Window(QMainWindow):
             return
         elapsed = self.table.item(row, col).data(Qt.ItemDataRole.UserRole)
         if elapsed is not None:
+            self.inspector.selected_identity = None
+            self.inspector.sort_resource({'ram_mib':'rss_mib', 'memory_mib':'rss_mib', 'cpu_percent':'cpu_percent',
+                                          'vram_mib':'vram_mib', 'gpu_percent':'vram_mib'}.get(self.metrics[row][0], 'rss_mib'))
+            self.process_dock.show()
             start, end = self.bounds()
             if not start <= elapsed <= end:
                 self.range_mode.setCurrentIndex(0)
                 self.follow.setChecked(True)
                 self.refresh()
             self.select_time(elapsed)
+            self.inspector.rebuild()
 
     def open_session(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open recording", str(self.data_dir), "Chequebo recordings (*.chequebo)")
@@ -782,6 +819,7 @@ class Window(QMainWindow):
         try:
             metadata, samples = load_session(path)
             self.metadata, self.samples = metadata, samples
+            self.inspector.selected_identity = None
             self.viewing_live = False
             self.manual_y.clear()
             self.live_window_seconds = None

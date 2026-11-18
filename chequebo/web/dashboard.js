@@ -65,20 +65,20 @@
     const axis = {showline:true,linecolor:'#909497',linewidth:1,ticks:'outside',tickcolor:'#909497',zeroline:false,automargin:true};
     const range=payload.range, ticks=Array.from({length:6},(_,i)=>range[0]+(range[1]-range[0])*i/5);
     const shapes=[],annotations=[];
-    for(const [name,value,color] of [['Record',payload.markers[0],'#269765'],['Stop',payload.markers[1],'#d28b22']]) {
+    for(const [name,value,color] of [['Record',payload.markers[0],'#65df9b'],['Stop',payload.markers[1],'#ffc368']]) {
       if(value===null)continue;
       shapes.push({type:'line',xref:'x',yref:'paper',x0:value,x1:value,y0:0,y1:1,line:{color,width:2}});
       annotations.push({xref:'x',yref:'paper',x:value,y:name==='Record'?1:.87,text:name,showarrow:false,font:{color,size:11},xanchor:'left'});
     }
     if(spec.ramLimit!==null && spec.ramLimit!==undefined) {
       shapes.push({type:'line',xref:'paper',yref:'y',x0:0,x1:1,y0:spec.ramLimit,y1:spec.ramLimit,line:{color:'#e35656',width:2}});
-      annotations.push({xref:'paper',yref:'y',x:1,y:spec.ramLimit,text:'Physical RAM: '+spec.ramLimit.toFixed(2)+' GiB',showarrow:false,xanchor:'right',yanchor:'bottom',font:{size:11,color:'#c94040'},bgcolor:'rgba(255,255,255,.8)'});
+      annotations.push({xref:'paper',yref:'y',x:1,y:spec.ramLimit,text:'Physical RAM: '+spec.ramLimit.toFixed(2)+' GiB',showarrow:false,xanchor:'right',yanchor:'bottom',font:{size:11,color:'#ff8181'},bgcolor:'rgba(28,37,49,.9)'});
     }
     if(payload.cursor!==null && !payload.cursorFollows) shapes.push({type:'line',xref:'x',yref:'paper',x0:payload.cursor,x1:payload.cursor,y0:0,y1:1,line:{color:'#a7b3b5',width:1,dash:'dot'}});
-    return {autosize:true,paper_bgcolor:'#fff',plot_bgcolor:'#fff',margin:{l:66,r:18,t:42,b:52},
-      font:{family:'Arial, sans-serif',size:12,color:'#606b6d'},hovermode:'x unified',dragmode:state.dragmode,
+    return {autosize:true,paper_bgcolor:'#1c2531',plot_bgcolor:'#1c2531',margin:{l:66,r:18,t:42,b:52},
+      font:{family:'Arial, sans-serif',size:12,color:'#c9d6e4'},hovermode:'x unified',dragmode:state.dragmode,
       uirevision:payload.epoch,showlegend:spec.series.length>1,legend:{orientation:'h',x:0,y:1.04,yanchor:'bottom'},
-      hoverlabel:{bgcolor:'#fff',bordercolor:'#4F858D'},shapes,annotations,
+      hoverlabel:{bgcolor:'#283747',bordercolor:'#78d5d2',font:{color:'#f0f5fb'}},shapes,annotations,
       xaxis:{...axis,title:{text:'Elapsed time'},showgrid:false,range,autorange:false,tickvals:ticks,ticktext:ticks.map(v=>clock(v)+(range[1]-range[0]<10?'.'+Math.floor(Math.max(0,v%1)*10):''))},
       yaxis:{...axis,title:{text:spec.unit},range:spec.yRange,autorange:false,showgrid:true,gridcolor:'rgba(200,200,200,.25)',
         ...(spec.ticks?{tickvals:spec.ticks,ticktext:spec.ticks.map(v=>Number(v.toFixed(2)).toString())}:{tickmode:'auto'})}};
@@ -86,10 +86,10 @@
   async function renderOne(spec,payload) {
     const s=cards.get(spec.key)||makeCard(spec);
     s.heading.textContent=spec.title; s.value.textContent=spec.value; s.value.title=spec.value;
-    const colors=['#4F858D','#FF6B6B'];
+    const colors=['#78d5d2','#ff9494'];
     const traces=spec.series.map((series,i)=>({type:'scatter',mode:'lines',name:series.name,x:spec.x,y:series.y,
       customdata:spec.x.map(clock),line:{color:colors[i],width:2},connectgaps:false,
-      hovertemplate:'%{customdata}<br>%{y:.2f} '+spec.unit+'<extra>%{fullData.name}</extra>'}));
+      hovertemplate:'%{customdata}<br>%{y:.2f} '+spec.unit+'<br>Click to inspect processes<extra>%{fullData.name}</extra>'}));
     s.busy=true;
     try { await Plotly.react(s.plot,traces,layout(spec,payload,s),config()); }
     finally { s.busy=false; }
@@ -110,7 +110,7 @@
         }
         emit({type:'range',key:spec.key,x:xChanged?x:null,y:yChanged?y:null});
       });
-      s.plot.on('plotly_click',event=>{const x=event.points?.[0]?.x;if(Number.isFinite(x))emit({type:'select',elapsed:x});});
+      s.plot.on('plotly_click',event=>{const x=event.points?.[0]?.x;if(Number.isFinite(x))emit({type:'select',key:spec.key,elapsed:x});});
       s.plot.on('plotly_doubleclick',()=>emit({type:'action',key:spec.key,action:'reset'}));
     }
   }
