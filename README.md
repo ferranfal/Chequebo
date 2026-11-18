@@ -88,6 +88,29 @@ Without the NVIDIA extra, CPU, RAM, disk and recording features still work.
    indicates. It also shows peaks within the selected range. Click a peak to
    navigate to its time; export a peak report or samples to CSV.
 
+Every chart series has a **soft red vertical peak band**, a red diamond at its
+maximum and a button with the value and exact sample time. Disk read/write and
+network download/upload each have their own peak. Bands span the full chart
+height even after Y zoom. They mark the maximum of the entire opened recording
+or current ten-minute live buffer, independently of X zoom; range maxima remain
+separate in the table. Equal maxima use their first sampled occurrence. Band
+width is only a visual aid, not the duration of a spike. Missing measurements
+do not produce a peak, and chart downsampling preserves extrema.
+
+Click a band, diamond, peak button or table value to open **Peak details** with
+the processes and Python phase markers recorded at that instant. A peak button
+also brings an off-screen maximum back into view. Live time continues advancing.
+The peak table includes a short observed-context column; exported peak CSVs
+include context for both the recording and selected-range maxima.
+
+For RAM, CPU and VRAM, context lists the largest accessible process measurements.
+RSS is not an allocation trace, can include shared pages, and excludes swap.
+GPU activity, disk rates, network rates and swap have no per-process attribution
+in these recordings; the inspector explicitly says so instead of guessing from
+another resource. Recorded phases describe activity during the sample interval,
+not proof of what caused a peak. Older recordings still show bands, but cannot
+recover process or phase information that was never saved.
+
 Charts use **Plotly**, with a dark background, bright teal lines, subtle grids and
 an always-visible toolbar. Click a chart to activate wheel zoom. Until then,
 the wheel scrolls the dashboard. Moving outside that chart or pressing **Esc**

@@ -57,9 +57,13 @@ class ProcessInspector(QWidget):
         self.details.setMinimumHeight(170)
         self.phases = QPlainTextEdit()
         self.phases.setReadOnly(True)
-        tabs = QTabWidget()
+        self.peak_details = QPlainTextEdit()
+        self.peak_details.setReadOnly(True)
+        self.peak_details.setPlainText('Click a red peak band, peak button or peak-table value to inspect its recorded context.')
+        tabs = self.tabs = QTabWidget()
         tabs.addTab(self.details, 'Process details')
         tabs.addTab(self.phases, 'Python phases')
+        tabs.addTab(self.peak_details, 'Peak details')
         box.addWidget(tabs, 2)
         note = QLabel('Click a chart or peak to inspect that instant. RAM is resident memory (RSS); shared pages can appear in several processes. CPU % uses total machine capacity. Δ RAM compares consecutive samples. NVIDIA VRAM is reported allocation, not GPU activity per process.')
         note.setWordWrap(True)
@@ -83,8 +87,14 @@ class ProcessInspector(QWidget):
                               'Process details were not saved in this recording.'))
         self.latest.setEnabled(not following)
         if changed:
+            self.peak_details.setPlainText('Click a red peak band, peak button or peak-table value to inspect its recorded context.')
             self.rebuild()
             self.show_phases()
+
+    def show_peak(self, peak):
+        self.peak_details.setPlainText(peak['label'] + '\n\n' + peak['context']['details'] +
+                                      '\n\nEqual maxima use their first sampled occurrence. A band marks an instant, not a measured duration.')
+        self.tabs.setCurrentWidget(self.peak_details)
 
     def show_phases(self):
         events = self.sample.get('phases', [])

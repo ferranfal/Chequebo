@@ -20,6 +20,7 @@ from .charts import PlotlyDashboard
 from .metrics import GPU
 from .monitor import SystemMonitor
 from .inspector import ProcessInspector
+from .peaks import describe_peak
 from .preferences import recording_directory, recording_settings
 from .session import clock, display_metric, export_maxima, export_samples, export_processes, load_session, maximum, metrics_for, metric_value
 
@@ -203,7 +204,7 @@ class Window(QMainWindow):
             "net_recv_mbps": ("Network · download / upload", "Mb/s", [("net_recv_mbps", "Download"), ("net_sent_mbps", "Upload")]),
         }
         self.dashboard = PlotlyDashboard(self)
-        self.dashboard.setFixedHeight(1078)
+        self.dashboard.setFixedHeight(1174)
         self.dashboard.event_received.connect(self.chart_event)
         self.layout.addWidget(self.dashboard)
         self.dashboard_index = self.layout.indexOf(self.dashboard)
@@ -237,6 +238,8 @@ class Window(QMainWindow):
         if kind == "scroll":
             bar = self.scroll.verticalScrollBar()
             bar.setValue(bar.value() + round(event.get("dy", 0)))
+        elif kind == "peak":
+            self.inspect_peak(event.get('metric'), event.get('elapsed'))
         elif kind == "select":
             self.process_dock.show()
             self.inspector.selected_identity = None
@@ -302,18 +305,19 @@ class Window(QMainWindow):
         actions.addWidget(data_button)
         actions.addStretch()
         box.addLayout(actions)
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Resource", "Recording peak", "Time", "Range peak", "Time"])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["Resource", "Recording peak", "Time", "Range peak", "Time", "Observed at peak"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().hide()
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         for col in range(1, 5):
             self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         self.table.setMinimumHeight(320)
         self.table.cellClicked.connect(self.jump_to_peak)
         box.addWidget(self.table)
-        note = QLabel("Click a peak to inspect it. Peaks are sampled: brief spikes can occur between samples. Each resource may peak at a different time.")
+        note = QLabel("Soft red bands mark the buffer/recording maximum of each chart series. Click a band, peak button or table value for recorded context. Equal maxima use their first sample; band width is not a duration. Range peaks are listed separately. Observed processes are not proof of cause.")
         note.setWordWrap(True)
         box.addWidget(note)
         self.layout.addWidget(group)
@@ -352,9 +356,9 @@ class Window(QMainWindow):
             self.chart_specs[key] = (title, unit, series)
         self.peaks_group.setTitle("Live buffer peaks · last 10 minutes" if self.viewing_live else "Recording peaks · whole system" if system else "Recording peaks · program + children (GPU activity is global)")
         self.table.setRowCount(len(self.metrics))
-        self.table.setHorizontalHeaderLabels(["Resource", "Buffer peak" if self.viewing_live else "Recording peak", "Time", "Range peak", "Time"])
+        self.table.setHorizontalHeaderLabels(["Resource", "Buffer peak" if self.viewing_live else "Recording peak", "Time", "Range peak", "Time", "Observed at buffer peak" if self.viewing_live else "Observed at recording peak"])
         for row, (_, title, _) in enumerate(self.metrics):
-            for col in range(5):
+            for col in range(6):
                 self.table.setItem(row, col, QTableWidgetItem(title if col == 0 else "—"))
         self.follow.setEnabled(not self.viewing_live)
         for spin in (self.start_time, self.end_time):
@@ -698,7 +702,7 @@ class Window(QMainWindow):
         if end <= start: end = start + 1
         selected = [sample for sample in self.samples if start - .05 <= sample['elapsed'] <= end + .05]
         charts = []
-        for key, (title, unit, _) in self.chart_specs.items():
+        for key, (title, unit, metrics) in self.chart_specs.items():
             x, series = self.chart_points(key, selected)
             values = [v for trace in series for v in trace['y'] if v is not None]
             capacity = None
@@ -713,9 +717,12 @@ class Window(QMainWindow):
                 step = 2 ** math.ceil(math.log2(capacity / 4))
                 ticks = [i * step for i in range(math.ceil(capacity / step)) if i * step < capacity - step * .35] + [capacity]
             self.chart_ranges[key] = [[start, end], list(yrange)]
+            # Calculate against original samples, before decimation or zoom.
+            peaks = [describe_peak(peak, metric, name, unit, self.peak_scope())
+                     for metric, name in metrics if (peak := maximum(self.samples, metric)) is not None]
             charts.append(dict(key=key, title=title, unit=unit, x=x, series=series, yRange=yrange, ticks=ticks,
                                ramLimit=self.ram_capacity_gib() if key == 'memory_mib' else None,
-                               value=self.chart_values.get(key, 'No samples')))
+                               value=self.chart_values.get(key, 'No samples'), peaks=peaks))
         cursor = self.samples[min(self.cursor.value(), len(self.samples) - 1)]['elapsed'] if self.samples else None
         self.dashboard.render(dict(charts=charts, range=[start, end], live=self.viewing_live,
                                    earliest=self.samples[0]['elapsed'] if self.samples else 0,
@@ -783,32 +790,59 @@ class Window(QMainWindow):
 
     def update_maxima(self):
         start, end = self.bounds()
-        for row, (key, _, unit) in enumerate(self.metrics):
+        for row, (key, title, unit) in enumerate(self.metrics):
             for base, peak in [(1, maximum(self.samples, key)),
                                (3, maximum(self.samples, key, start - 0.05, end + 0.05))]:
+                description = describe_peak(peak, key, title, unit, self.peak_scope() if base == 1 else 'Range peak') if peak else None
                 display, display_unit = display_metric(key, peak[key] if peak else None, unit)
                 value = f"{display:.2f} {display_unit}".strip() if peak else "Unavailable"
                 instant = clock(peak["elapsed"]) if peak else "—"
                 for col, text in [(base, value), (base + 1, instant)]:
                     self.table.item(row, col).setText(text)
                     self.table.item(row, col).setData(Qt.ItemDataRole.UserRole, peak["elapsed"] if peak else None)
+                    self.table.item(row, col).setToolTip(description['label'] + '\n\n' + description['context']['details'] if description else '')
+                if base == 1:
+                    item = self.table.item(row, 5)
+                    item.setText(description['context']['summary'] if description else 'Unavailable')
+                    item.setToolTip(description['context']['details'] if description else '')
+                    item.setData(Qt.ItemDataRole.UserRole, peak['elapsed'] if peak else None)
+
+    def peak_scope(self):
+        return 'Buffer peak' if self.viewing_live else 'Recording peak'
+
+    def inspect_peak(self, key, elapsed, scope=None):
+        metric = next((item for item in self.metrics if item[0] == key), None)
+        # An old click may arrive after its live sample expired. Never substitute
+        # a different sample and claim it explains the original peak.
+        sample = next((s for s in self.samples if s['elapsed'] == elapsed), None)
+        if metric is None or sample is None:
+            return
+        value = metric_value(sample, key)
+        if not isinstance(value, (int, float)) or not math.isfinite(value):
+            return
+        peak = describe_peak(sample, key, metric[1], metric[2], scope or self.peak_scope())
+        if self.fullscreen_dialog:
+            self.fullscreen_dialog.close()
+        self.inspector.selected_identity = None
+        self.inspector.filter.clear()
+        self.inspector.sort_resource(peak['context']['sort'])
+        self.process_dock.show()
+        start, end = self.bounds()
+        if not start <= elapsed <= end:
+            self.live_window_seconds = None
+            self.range_mode.setCurrentIndex(0)
+            self.follow.setChecked(True)
+            self.refresh()
+        self.select_time(elapsed)
+        self.inspector.rebuild()
+        self.inspector.show_peak(peak)
 
     def jump_to_peak(self, row, col):
         if col == 0:
             return
         elapsed = self.table.item(row, col).data(Qt.ItemDataRole.UserRole)
         if elapsed is not None:
-            self.inspector.selected_identity = None
-            self.inspector.sort_resource({'ram_mib':'rss_mib', 'memory_mib':'rss_mib', 'cpu_percent':'cpu_percent',
-                                          'vram_mib':'vram_mib', 'gpu_percent':'vram_mib'}.get(self.metrics[row][0], 'rss_mib'))
-            self.process_dock.show()
-            start, end = self.bounds()
-            if not start <= elapsed <= end:
-                self.range_mode.setCurrentIndex(0)
-                self.follow.setChecked(True)
-                self.refresh()
-            self.select_time(elapsed)
-            self.inspector.rebuild()
+            self.inspect_peak(self.metrics[row][0], elapsed, 'Range peak' if col in (3, 4) else self.peak_scope())
 
     def open_session(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open recording", str(self.data_dir), "Chequebo recordings (*.chequebo)")

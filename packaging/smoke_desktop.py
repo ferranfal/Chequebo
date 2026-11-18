@@ -28,7 +28,11 @@ try:
     assert window.samples[-1]['process_snapshot'], 'No process snapshot in the installed app'
     assert window.inspector.table.rowCount() > 0, 'The installed process inspector is empty'
     assert window.bounds()[1] == window.samples[-1]['elapsed']
-    print('Installed desktop: six Plotly charts, live samples, process inspector and network metrics OK')
+    memory = next(c for c in state[-1]['latest']['charts'] if c['key']=='memory_mib')
+    assert memory['peaks'] and memory['peaks'][0]['value'] >= 0, 'No memory peak in installed charts'
+    window.inspect_peak('memory_mib', memory['peaks'][0]['elapsed'])
+    assert 'Buffer peak' in window.inspector.peak_details.toPlainText(), 'Peak inspector did not open'
+    print('Installed desktop: six Plotly charts, live samples, processes, network and peak context OK')
 finally:
     window.close()
     app.processEvents()

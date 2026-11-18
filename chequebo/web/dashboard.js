@@ -3,6 +3,8 @@
   const cards = new Map();
   let bridge, active = null, full = null, latest = null, pending = null, rendering = false;
   const emit = event => { if (bridge) bridge.send(JSON.stringify(event)); };
+  const escapeText = text => String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const selectPeak = (key,peak) => emit({type:'peak',key,metric:peak.metric,elapsed:peak.elapsed});
   const icon = path => ({width:24,height:24,path});
   const icons = {
     xIn:icon('M2 5h3l3 5 3-5h3l-5 7 5 7h-3l-3-5-3 5H2l5-7zM19 8h2v3h3v2h-3v3h-2v-3h-3v-2h3z'),
@@ -20,6 +22,28 @@
     }
   }
   document.addEventListener('pointerdown', event => activate(event.target.closest('.card')?.dataset.key || null), true);
+  // Shapes are behind the traces. Hit-test a short click across the full-height
+  // band without stealing Plotly's drag-to-zoom or pan gestures.
+  let pointerStart=null;
+  document.addEventListener('pointerdown', event=>{
+    const plot=event.target.closest('.plot');
+    pointerStart=event.button===0 && plot ? {key:plot.dataset.key,x:event.clientX,y:event.clientY} : null;
+  },true);
+  document.addEventListener('pointercancel',()=>{pointerStart=null;},true);
+  document.addEventListener('pointerup',event=>{
+    const start=pointerStart; pointerStart=null;
+    if(!start || Math.hypot(event.clientX-start.x,event.clientY-start.y)>4)return;
+    const s=cards.get(start.key), axes=s?.plot._fullLayout;
+    if(!axes)return;
+    const rect=s.plot.getBoundingClientRect(), x=event.clientX-rect.left, y=event.clientY-rect.top;
+    if(x<axes.xaxis._offset || x>axes.xaxis._offset+axes.xaxis._length || y<axes.yaxis._offset || y>axes.yaxis._offset+axes.yaxis._length)return;
+    const hits=(s.peaks||[]).filter(p=>p.elapsed>=axes.xaxis.range[0] && p.elapsed<=axes.xaxis.range[1] && Math.abs(axes.xaxis.d2p(p.elapsed)+axes.xaxis._offset-x)<=7);
+    if(hits.length) {
+      const peak=hits.reduce((best,p)=>Math.abs(axes.yaxis.d2p(p.value)+axes.yaxis._offset-y)<Math.abs(axes.yaxis.d2p(best.value)+axes.yaxis._offset-y)?p:best);
+      // Run after Plotly's own point click, which may select a neighbouring x.
+      setTimeout(()=>selectPeak(start.key,peak),0);
+    }
+  },true);
   document.addEventListener('wheel', event => {
     const card = event.target.closest('.card');
     if (!card || active !== card.dataset.key) {
@@ -50,21 +74,29 @@
     const heading=document.createElement('h2'); heading.className='heading';
     const value=document.createElement('p'); value.className='value';
     const hint=document.createElement('p'); hint.className='hint';
+    const peaks=document.createElement('div'); peaks.className='peaks';
     const plot=document.createElement('div'); plot.className='plot'; plot.dataset.key=spec.key;
-    card.append(heading,value,hint,plot); document.getElementById('charts').append(card);
+    card.append(heading,value,hint,peaks,plot); document.getElementById('charts').append(card);
     card.addEventListener('mouseleave',event=>{
       // Plotly places a drag cover over the page on mouse-down. That is not
       // the user leaving the chart: retain activation while still inside it.
       const rect=card.getBoundingClientRect();
       if(active===spec.key && (event.clientX<rect.left || event.clientX>=rect.right || event.clientY<rect.top || event.clientY>=rect.bottom)) activate(null);
     });
-    const s={card,heading,value,hint,plot,busy:false,initialized:false,dragmode:'zoom'}; cards.set(spec.key,s);
+    const s={card,heading,value,hint,peakButtons:peaks,plot,busy:false,initialized:false,dragmode:'zoom'}; cards.set(spec.key,s);
     activate(active); return s;
   }
   function layout(spec, payload, state) {
     const axis = {showline:true,linecolor:'#909497',linewidth:1,ticks:'outside',tickcolor:'#909497',zeroline:false,automargin:true};
     const range=payload.range, ticks=Array.from({length:6},(_,i)=>range[0]+(range[1]-range[0])*i/5);
     const shapes=[],annotations=[];
+    for(const peak of spec.peaks||[]) {
+      // Pixel width keeps a sampled instant visible at any time zoom. This is
+      // deliberately not an invented interval around the maximum.
+      if(peak.elapsed<range[0] || peak.elapsed>range[1])continue;
+      shapes.push({name:'peak:'+peak.metric,type:'rect',xref:'x',yref:'paper',xsizemode:'pixel',xanchor:peak.elapsed,
+        x0:-6,x1:6,y0:0,y1:1,fillcolor:'rgba(255,105,105,.18)',line:{width:0},layer:'below'});
+    }
     for(const [name,value,color] of [['Record',payload.markers[0],'#65df9b'],['Stop',payload.markers[1],'#ffc368']]) {
       if(value===null)continue;
       shapes.push({type:'line',xref:'x',yref:'paper',x0:value,x1:value,y0:0,y1:1,line:{color,width:2}});
@@ -86,10 +118,26 @@
   async function renderOne(spec,payload) {
     const s=cards.get(spec.key)||makeCard(spec);
     s.heading.textContent=spec.title; s.value.textContent=spec.value; s.value.title=spec.value;
+    s.peaks=spec.peaks||[];
+    const peakState=JSON.stringify(s.peaks.map(p=>[p.metric,p.elapsed,p.value,p.label,p.context.summary]));
+    if(s.peakState!==peakState) {
+      s.peakState=peakState; s.peakButtons.replaceChildren();
+      for(const peak of s.peaks) {
+        const button=document.createElement('button'); button.type='button'; button.dataset.metric=peak.metric;
+        button.textContent=peak.label; button.title=peak.label+'\n'+peak.context.summary+'\nClick to inspect recorded context. Equal maxima use the first sample.';
+        button.addEventListener('click',()=>selectPeak(spec.key,peak)); s.peakButtons.append(button);
+      }
+      if(!s.peaks.length)s.peakButtons.textContent='Peak unavailable · no measurements';
+    }
     const colors=['#78d5d2','#ff9494'];
     const traces=spec.series.map((series,i)=>({type:'scatter',mode:'lines',name:series.name,x:spec.x,y:series.y,
       customdata:spec.x.map(clock),line:{color:colors[i],width:2},connectgaps:false,
       hovertemplate:'%{customdata}<br>%{y:.2f} '+spec.unit+'<br>Click to inspect processes<extra>%{fullData.name}</extra>'}));
+    for(const peak of s.peaks)traces.push({type:'scatter',mode:'markers',name:peak.name+' peak',
+      x:[peak.elapsed],y:[peak.value],showlegend:false,meta:{peak:peak.metric},
+      marker:{color:'#ff8585',size:10,symbol:'diamond',line:{color:'#1c2531',width:1}},
+      customdata:[escapeText(peak.label)+'<br>'+escapeText(peak.context.summary)+'<br>Click for processes and recorded phases'],
+      hovertemplate:'%{customdata}<extra></extra>'});
     s.busy=true;
     try { await Plotly.react(s.plot,traces,layout(spec,payload,s),config()); }
     finally { s.busy=false; }
@@ -110,7 +158,12 @@
         }
         emit({type:'range',key:spec.key,x:xChanged?x:null,y:yChanged?y:null});
       });
-      s.plot.on('plotly_click',event=>{const x=event.points?.[0]?.x;if(Number.isFinite(x))emit({type:'select',key:spec.key,elapsed:x});});
+      s.plot.on('plotly_click',event=>{
+        const point=event.points?.[0], x=point?.x;
+        const peak=s.peaks.find(p=>p.metric===point?.data?.meta?.peak);
+        if(peak)selectPeak(spec.key,peak);
+        else if(Number.isFinite(x))emit({type:'select',key:spec.key,elapsed:x});
+      });
       s.plot.on('plotly_doubleclick',()=>emit({type:'action',key:spec.key,action:'reset'}));
     }
   }

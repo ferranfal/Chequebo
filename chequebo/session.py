@@ -7,6 +7,8 @@ import sqlite3
 import zlib
 from pathlib import Path
 
+from .peaks import peak_context
+
 # key, title, unit. None means unavailable and is never converted to zero.
 METRICS = (
     ("ram_mib", "Program RAM (PSS)", "MiB"),
@@ -164,7 +166,8 @@ def export_maxima(path, samples, start, end, metadata=None):
     with open(path, "w", encoding="utf-8", newline="") as output:
         writer = csv.writer(output)
         writer.writerow(["resource", "unit", "recording_peak", "recording_peak_second",
-                         "range_peak", "range_peak_second", "from_second", "to_second"])
+                         "range_peak", "range_peak_second", "from_second", "to_second",
+                         "recording_peak_context", "range_peak_context"])
         for key, title, unit in metrics_for(metadata or {}):
             whole, selected = maximum(samples, key), maximum(samples, key, start, end)
             whole_value, display_unit = display_metric(key, whole[key] if whole else None, unit)
@@ -172,7 +175,8 @@ def export_maxima(path, samples, start, end, metadata=None):
             writer.writerow([title, display_unit,
                              whole_value if whole else "", whole["elapsed"] if whole else "",
                              selected_value if selected else "", selected["elapsed"] if selected else "",
-                             start, end])
+                             start, end, peak_context(whole, key)['details'] if whole else '',
+                             peak_context(selected, key)['details'] if selected else ''])
 
 
 def export_processes(path, samples):
